@@ -31,3 +31,9 @@ variable "additional_labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "gcp_credentials_json" {
+  description = "Full JSON contents of a GCP service account key. Wired directly into the Google provider's 'credentials' argument to bypass any env-var injection ambiguity. Sourced from Torque's Parameter Store; never paste into tfvars."
+  type        = string
+  sensitive   = true
+}

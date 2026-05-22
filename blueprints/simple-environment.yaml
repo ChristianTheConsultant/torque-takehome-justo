@@ -42,12 +42,12 @@ grains:
       agent:
         name: '{{ .inputs.agent }}'
 
+      # GOOGLE_PROJECT is kept as a convenience env var for the provider's
+      # default project resolution. The credential JSON itself is passed as
+      # an explicit Terraform variable below (see gcp_credentials_json),
+      # which gives a more direct and testable auth path than relying on
+      # GOOGLE_CREDENTIALS env-var injection through the runner.
       env_vars:
-        # GOOGLE_CREDENTIALS holds the full JSON contents of a GCP service
-        # account key, sourced from Torque's Parameter Store. Never paste the
-        # JSON directly into this YAML - store it as a parameter named
-        # 'gcp_sa_key_json' in the Torque account/space.
-        - GOOGLE_CREDENTIALS: '{{ .params.gcp_sa_key_json }}'
         - GOOGLE_PROJECT: '{{ .inputs.gcp_project_id }}'
 
       inputs:
@@ -55,6 +55,7 @@ grains:
         - region: '{{ .inputs.gcp_region }}'
         - bucket_name_prefix: '{{ .inputs.bucket_name_prefix }}'
         - force_destroy: 'true'
+        - gcp_credentials_json: '{{ .params.gcp_sa_key_json }}'
 
       outputs:
         - bucket_name
