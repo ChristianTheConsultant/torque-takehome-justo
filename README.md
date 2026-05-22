@@ -70,7 +70,7 @@ The module under [`terraform/`](./terraform/) provisions a single `google_storag
 
 Provider versions are pinned in `versions.tf` (`google ~> 5.0`, `random ~> 3.5`, Terraform `>= 1.3.0, < 2.0.0`). The lock file (`.terraform.lock.hcl`) is intentionally committed so the agent uses the same provider builds I tested with.
 
-- Screenshot: `docs/screenshots/02-terraform-init.png` (local `terraform init` to confirm clean module before commit)
+- Screenshot: `docs/screenshots/02-github-actions-green.png` (CI workflow validating the Terraform module on initial commit)
 
 ### 3. Connect the repo
 
@@ -81,13 +81,15 @@ Registered this GitHub repo in Torque under **Repositories** with a personal acc
 
 ### 4. Create the blueprint
 
-The blueprint at [`blueprints/simple-environment.yaml`](./blueprints/simple-environment.yaml) declares four inputs (`agent`, `gcp_project_id`, `gcp_region`, `bucket_name_prefix`) and a single `kind: terraform` grain. Two design choices worth calling out:
+The blueprint at [`blueprints/simple-environment.yaml`](./blueprints/simple-environment.yaml) lives in this repo and was discovered by Torque alongside the Terraform module when the repo was synced. No edits in the Torque UI were needed: the YAML I committed locally was the YAML Torque used to launch the environment. That GitOps shape is the right pattern for customers, and worth calling out independently of this exercise: blueprint definitions live in version control, Torque consumes them, and changes flow through pull requests.
+
+The blueprint declares four inputs (`agent`, `gcp_project_id`, `gcp_region`, `bucket_name_prefix`) and a single `kind: terraform` grain. Two design choices worth calling out:
 
 - **GCP credentials are pulled from Torque's Parameter Store, not from blueprint inputs.** A Parameter named `gcp_sa_key_json` holds the full JSON contents of a service account key. The grain references it as `{{ .params.gcp_sa_key_json }}` and injects it into the agent process as `GOOGLE_CREDENTIALS`. Operators launching the blueprint never see the credential and never need to paste it.
 - **Outputs are exposed twice: once at the grain level (so they're captured from the TF module), and once at the blueprint level (so they show up in the environment UI).** This is Torque's two-step output exposure model and the YAML reflects it explicitly.
 
-- Screenshot: `docs/screenshots/05-blueprint-yaml.png`
-- Screenshot: `docs/screenshots/06-blueprint-published.png`
+- Screenshot: `docs/screenshots/04-parameter-store.png` (GCP SA JSON stored in Torque's Parameter Store as a sensitive value, referenced by the blueprint)
+- Screenshot: `docs/screenshots/04a-credentials-no-gcp.png` (the Torque Credentials UI for context on the credential-storage asymmetry, see Challenges section)
 
 ### 5. Launch the environment
 
@@ -127,7 +129,19 @@ Worth flagging in customer conversations: ARM-only Mac fleets are now common on 
 
 **Agent visibility for the blueprint.** After the agent registered, it didn't immediately show up as a selectable option in the blueprint input dropdown. A page refresh resolved it; this is the kind of soft caching behavior worth knowing about when walking a customer through their first launch live.
 
-**GCP credentials handling.** No documentation example for GCP in the Torque docs I reviewed, so I followed the standard Terraform-on-GCP pattern: store the full JSON SA key as a single Parameter Store value, inject it into the agent as `GOOGLE_CREDENTIALS`. This works because the Terraform Google provider accepts either a file path or the raw JSON contents in that variable. For AWS the equivalent is two parameters mapped to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+**GKE node sizing was too small on the first cluster build.** Initially provisioned the agent host cluster with a single `e2-small` node (2 vCPU shared, 2 GB memory). The Torque agent pod fit fine, but when the first environment launch fired, the ephemeral runner pod that Torque schedules to execute the Terraform was Unschedulable. The kube-scheduler event was explicit: `0/1 nodes are available: 1 Insufficient cpu, 1 Insufficient memory` (see `docs/screenshots/07a-first-failure-runner-unschedulable.png`). The runner needs its own resource budget on top of the agent and GKE system pods.
+
+Fix: rolled the node pool to `e2-standard-2` (2 vCPU dedicated, 8 GB) via the standard GKE pattern of adding a new pool, waiting for the node to be Ready, then deleting the old pool. The agent rescheduled onto the new node automatically and the next launch progressed past the scheduling phase.
+
+Worth flagging for customer adoption: the agent's host cluster needs to be sized for both the long-running agent pod AND the per-grain ephemeral runners that spin up during launches. A two-node baseline with workload-class machines is the right starting point, not a single small node. This deserves a paragraph in any customer's adoption runbook.
+
+**GCP credentials handling and Torque's credential store asymmetry.** Torque's Credentials UI (Settings → Credentials) supports AWS and Azure as first-class typed credential objects, plus Git providers. GCP is not a first-class credential type as of this exercise. Per Quali's own documentation and Terraform-secrets blog post, the recommended pattern for GCP is the Parameter Store: store the full JSON SA key as a single sensitive value, then reference it from the blueprint as `{{ .params.<name> }}`. That's what this submission does.
+
+In a customer engagement I'd flag this asymmetry early during onboarding for any GCP-heavy team. It's not a blocker (the pattern works fine and is officially supported), but it does mean GCP customers don't get the structured sub-field references that AWS/Azure customers do (e.g., `{{ .credentials.<name>.access_key }}`). A first-class GCP credential type with fields like `service_account_email` and `private_key` would close that gap and make the customer experience symmetric across the big three clouds. See `docs/screenshots/04a-credentials-no-gcp.png` for the current Credentials UI state.
+
+**Runner authentication fell back to node metadata server on first auth attempt.** Initially wired the SA key through Torque's `env_vars` block as `GOOGLE_CREDENTIALS`, which is a documented Terraform Google provider env var. The launch failed with `Error 403: Provided scope(s) are not authorized, forbidden` on the bucket create (see `docs/screenshots/07b-second-failure-auth-scope.png`). That exact error is the signature of OAuth-scope-restricted credentials, specifically the GKE node's default metadata server token (read-only storage scope), not a service account key (which has no OAuth scopes). Diagnostic conclusion: the env-var injection was being silently dropped or rendered empty, and the Google provider was falling back to ADC.
+
+Fix: switched to passing the credential JSON as an explicit Terraform variable wired directly into the provider's `credentials` argument. This is more robust because it routes auth through Terraform's own variable system instead of relying on the runner's env-var passthrough behaving as expected. The fix is also the better engineering pattern independent of this bug: explicit, testable, and visible in the module's interface. Worth noting that this is the path Quali's docs and blog content recommend for GCP, so it lands us back on the documented happy path rather than improvising.
 
 ## Production hardening considerations
 
@@ -136,8 +150,10 @@ A few things this blueprint does not yet do that I'd want before recommending th
 - **Credential scope.** The service account key used here has broad Storage Admin permissions. In a customer engagement I'd push for either Workload Identity Federation between the Torque agent's K8s cluster and GCP (no static keys at all), or at minimum a per-blueprint SA scoped to a single resource group with key rotation enforced.
 - **State storage.** Terraform state is held by Torque. For multi-team customer environments I'd want to understand Torque's state isolation guarantees (per-environment encryption, access control on read) and the recovery story if Torque's control plane is unreachable.
 - **Agent isolation.** A single agent running blueprints across multiple customer projects is a blast-radius concern. The right pattern is one agent per security boundary (per tenant, per environment class). Worth surfacing early in a customer's adoption plan.
+- **Agent host sizing and capacity.** As documented in the Challenges section, the agent's host cluster has to be sized for both the long-running agent pod and the per-grain ephemeral runners. For a real engagement, recommend a baseline of at least two workload-class nodes with cluster autoscaler enabled, plus pod-level resource requests on the runner so the scheduler has accurate information. Cluster sizing is a footgun on a small cluster and easy to overlook until the first non-trivial launch fails.
 - **Bucket defaults.** `public_access_prevention=enforced` and `uniform_bucket_level_access=true` are in this module because they should be the default. A customer team retrofitting an existing TF estate into Torque should expect these as a gate, not as a code review nit.
 - **Secret references in YAML.** `{{ .params.gcp_sa_key_json }}` is fine, but in a real engagement I'd want a clear audit trail: who can read that parameter, when was it last rotated, and is its rotation tied to the SA key lifecycle in GCP. This is the kind of audit gap I'd want Torque to either solve natively or integrate with the customer's existing secrets manager.
+- **Parameter Store vs. Credentials.** I used Torque's Parameter Store for the SA JSON because the blueprint references it directly via `{{ .params.x }}`, and a single-string parameter is the path of least resistance. Torque also exposes a dedicated **Credentials** entry under space settings that looks purpose-built for multi-field cloud auth. In a real customer engagement I'd probably evaluate that store first since it has stronger semantics around credential lifecycle, and only fall back to Parameter Store for non-credential configuration.
 
 ## How I'd position this with a customer
 
@@ -146,7 +162,7 @@ The simplest framing of Torque from this exercise: **it's the layer that turns I
 The three points I'd lead with on a discovery call after this exercise:
 
 1. **Self-service without bypass.** The blueprint exposes a small, deliberate surface (project, region, prefix) and hides credentials and orchestration behind it. Application teams can launch environments without holding cloud credentials, and platform teams retain control of the IaC.
-2. **Composability without coupling.** The blueprint references a Terraform module by path in a repo. Swapping that module out, or composing multiple grains across Terraform, Helm, and shell scripts, is a YAML change. There is no Torque-specific code in the module itself.
+2. **Composability without coupling.** The blueprint references a Terraform module by path in a repo. Swapping that module out, or composing multiple grains across Terraform, Helm, and shell scripts, is a YAML change. There is no Torque-specific code in the module itself. The blueprint YAML lives in the same repo as the module and is discovered by Torque automatically: a customer team can keep their entire environment definition under PR review without leaving git.
 3. **Agent-based execution as a tenancy boundary.** Agents are where the customer's compliance posture meets Torque's orchestration. The fact that one is required, and that it runs in the customer's cluster, is a feature for regulated industries; it means cloud credentials and state never leave the customer's perimeter.
 
 ## What I'd build next
