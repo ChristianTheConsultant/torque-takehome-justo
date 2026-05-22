@@ -28,6 +28,14 @@ inputs:
       Prefix for the bucket name. The Terraform module appends an 8-character
       random hex suffix to ensure global uniqueness across launches.
 
+  k8s_namespace:
+    type: string
+    default: default
+    description: |
+      Kubernetes namespace into which the Helm grain deploys its ConfigMap.
+      Defaults to 'default' which is also the Torque agent's default namespace,
+      so no additional RBAC plumbing is required for the demo.
+
 grains:
 
   gcs_bucket:
@@ -62,6 +70,31 @@ grains:
         - bucket_url
         - bucket_self_link
         - bucket_location
+
+  # Second grain: a Helm chart that deploys a ConfigMap into the same GKE
+  # cluster the Torque agent is running on. It reads the bucket outputs from
+  # the Terraform grain above and stamps them into the ConfigMap data, which
+  # demonstrates two Torque features at once:
+  #   1) Grain composition across different IaC kinds (terraform + helm)
+  #   2) Cross-grain output passing via {{ .grains.X.outputs.Y }}
+  # Torque resolves the dependency automatically because of the output reference.
+  bucket_info_helm:
+    kind: helm
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: helm/bucket-info
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      target-namespace: '{{ .inputs.k8s_namespace }}'
+
+      inputs:
+        - gcsBucket: '{{ .grains.gcs_bucket.outputs.bucket_name }}'
+        - gcsBucketUrl: '{{ .grains.gcs_bucket.outputs.bucket_url }}'
+        - gcsBucketLocation: '{{ .grains.gcs_bucket.outputs.bucket_location }}'
+        - environmentName: '{{ envid | downcase }}'
 
 outputs:
 

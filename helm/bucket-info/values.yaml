@@ -1,0 +1,8 @@
+# Default values. The Torque Helm grain overrides these via --set semantics
+# (passed through the grain's `inputs:` list) at deploy time. Defaults here
+# are placeholders so the chart can also be `helm template`d locally.
+
+gcsBucket: ""
+gcsBucketUrl: ""
+gcsBucketLocation: ""
+environmentName: ""

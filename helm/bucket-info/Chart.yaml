@@ -1,0 +1,11 @@
+apiVersion: v2
+name: bucket-info
+description: |
+  Minimal Helm chart that records the GCS bucket provisioned by the sibling
+  Terraform grain in this blueprint. Deploys a single ConfigMap into the
+  target namespace. Used here to demonstrate that Torque can compose grains
+  of different kinds in the same blueprint and pass outputs from one grain
+  into another's inputs.
+type: application
+version: 0.1.0
+appVersion: "1.0"

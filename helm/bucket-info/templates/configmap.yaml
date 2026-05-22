@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-bucket-info
+  labels:
+    app.kubernetes.io/name: bucket-info
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    managed_by: torque
+    blueprint: simple-environment
+    iac: helm
+data:
+  gcs_bucket:          {{ .Values.gcsBucket | quote }}
+  gcs_bucket_url:      {{ .Values.gcsBucketUrl | quote }}
+  gcs_bucket_location: {{ .Values.gcsBucketLocation | quote }}
+  environment_name:    {{ .Values.environmentName | quote }}
+  note: "ConfigMap produced by a Torque Helm grain that received outputs from a sibling Terraform grain in the same blueprint. The bucket itself lives in GCP; this resource is a K8s record of what was provisioned alongside it."
