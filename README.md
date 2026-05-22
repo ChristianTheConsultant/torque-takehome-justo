@@ -20,6 +20,12 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   └── versions.tf                           provider and Terraform pinning
 ├── blueprints/
 │   └── simple-environment.yaml               Torque blueprint (spec_version 2)
+├── helm/                                     bonus grain: Helm chart for K8s
+│   └── bucket-info/
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
+│           └── configmap.yaml                ConfigMap stamped with bucket name
 ├── .github/workflows/
 │   └── terraform-validate.yml                fmt + validate + tflint on PR/push
 ├── docs/screenshots/                         end-to-end run evidence
@@ -34,11 +40,11 @@ The assignment allows AWS, Azure, or GCP. I chose GCS (Google Cloud Storage) bec
 
 Three Torque primitives compose the environment:
 
-1. **Repository.** This Git repo is registered in Torque as a source. Torque's asset discovery walks the tree and identifies the Terraform module at `terraform/` as a grain candidate.
-2. **Grain.** The Terraform module is consumed as a single `kind: terraform` grain in the blueprint. The grain's `spec` block declares where the source lives, which agent runs it, what environment variables and inputs are passed in, and which outputs are captured.
-3. **Blueprint.** The blueprint at `blueprints/simple-environment.yaml` defines the operator-facing inputs (project, region, bucket prefix, agent selection), composes one grain, and re-exposes its outputs at the environment level so they appear in the Torque UI.
+1. **Repository.** This Git repo is registered in Torque as a source. Torque's asset discovery walks the tree and identifies both the Terraform module at `terraform/` and the Helm chart at `helm/bucket-info/` as grain candidates.
+2. **Grains.** Two grains are composed in the same blueprint: a `kind: terraform` grain that provisions the GCS bucket, and a `kind: helm` grain that deploys a ConfigMap into the K8s cluster the agent is running on. The Helm grain reads outputs from the Terraform grain (`{{ .grains.gcs_bucket.outputs.bucket_name }}`) and stamps them into the ConfigMap data. Torque resolves the cross-grain dependency automatically via the output reference: the Helm grain doesn't run until the Terraform grain has reported its outputs.
+3. **Blueprint.** The blueprint at `blueprints/simple-environment.yaml` defines the operator-facing inputs (project, region, bucket prefix, namespace, agent selection), composes the two grains, and re-exposes the Terraform outputs at the environment level so they appear in the Torque UI.
 
-A Kubernetes-based Torque agent runs the grain. It pulls the module from the connected repo, executes `terraform init/plan/apply` against the GCP provider using credentials supplied through Torque's Parameter Store, and reports outputs and state back to the control plane.
+A Kubernetes-based Torque agent runs both grains in sequence. For the Terraform grain it pulls the module from the connected repo, executes `terraform init/plan/apply` against the GCP provider using credentials supplied through Torque's Parameter Store, and reports outputs and state back to the control plane. For the Helm grain it runs `helm install` against the cluster it's running in, with values set from the Terraform outputs and the operator's namespace input.
 
 ## Implementation walkthrough
 
@@ -50,9 +56,14 @@ Provisioned a small GKE cluster as the agent host (see the [Challenges & Workaro
 
 After applying the manifest, the agent registered itself with the Torque control plane and showed up healthy in the **Agents** view.
 
-- Screenshot: `docs/screenshots/00a-gke-cluster-created.png` (`gcloud container clusters create` succeeding)
-- Screenshot: `docs/screenshots/00b-gke-kubectl-verified.png` (`kubectl get nodes` and `kubectl get pods -A` against the new cluster)
-- Screenshot: `docs/screenshots/01-agent-healthy.png` (Torque UI showing the agent connected and healthy)
+![gcloud container clusters create torque-agent-host succeeded](docs/screenshots/00a-gke-cluster-created.png)
+*GKE cluster `torque-agent-host` provisioned in `us-central1-a`. Single-node default pool was later rolled to `e2-standard-2`; see Challenges section.*
+
+![kubectl get nodes and kubectl get pods -A against the new cluster](docs/screenshots/00b-gke-kubectl-verified.png)
+*kubectl pointed at the new cluster, nodes Ready, all system pods Running. Ready to apply the Torque agent manifest.*
+
+![Torque UI showing the agent torque-agent-gcp Connected as type GKE](docs/screenshots/01-agent-healthy.png)
+*Agent connected to the Torque control plane with default namespace and default service account, type GKE.*
 
 ### 2. Create and commit the Terraform module
 
@@ -70,14 +81,18 @@ The module under [`terraform/`](./terraform/) provisions a single `google_storag
 
 Provider versions are pinned in `versions.tf` (`google ~> 5.0`, `random ~> 3.5`, Terraform `>= 1.3.0, < 2.0.0`). The lock file (`.terraform.lock.hcl`) is intentionally committed so the agent uses the same provider builds I tested with.
 
-- Screenshot: `docs/screenshots/02-github-actions-green.png` (CI workflow validating the Terraform module on initial commit)
+![GitHub Actions Terraform Validation workflow green check on initial commit](docs/screenshots/02-github-actions-green.png)
+*CI workflow validates fmt, init, validate, and tflint against the Terraform module on every push and pull request. Initial commit passed in 11 seconds.*
 
 ### 3. Connect the repo
 
 Registered this GitHub repo in Torque under **Repositories** with a personal access token scoped to the single repo. After syncing, Torque's asset discovery surfaced the `terraform/` directory as a Terraform module, with its `variable` blocks pre-populated as candidate blueprint inputs and its `output` blocks pre-populated as candidate grain outputs.
 
-- Screenshot: `docs/screenshots/03-repo-connected.png`
-- Screenshot: `docs/screenshots/04-asset-discovered.png`
+![Repository torque-takehome-justo connected to Torque space solutions-cj](docs/screenshots/03-repo-connected.png)
+*GitHub repo registered in Torque as `torque-takehome-justo`. The repo name matches the `source.store` value in the blueprint YAML, which is the binding mechanism.*
+
+![Terraform module discovered as an IaC asset in Automation Inventory](docs/screenshots/04-asset-discovered.png)
+*After sync, Torque's asset discovery surfaces the `terraform/` directory as a Terraform IaC asset, ready to be composed into a blueprint.*
 
 ### 4. Create the blueprint
 
@@ -88,22 +103,31 @@ The blueprint declares four inputs (`agent`, `gcp_project_id`, `gcp_region`, `bu
 - **GCP credentials are pulled from Torque's Parameter Store, not from blueprint inputs.** A Parameter named `gcp_sa_key_json` holds the full JSON contents of a service account key. The grain references it as `{{ .params.gcp_sa_key_json }}` and injects it into the agent process as `GOOGLE_CREDENTIALS`. Operators launching the blueprint never see the credential and never need to paste it.
 - **Outputs are exposed twice: once at the grain level (so they're captured from the TF module), and once at the blueprint level (so they show up in the environment UI).** This is Torque's two-step output exposure model and the YAML reflects it explicitly.
 
-- Screenshot: `docs/screenshots/04-parameter-store.png` (GCP SA JSON stored in Torque's Parameter Store as a sensitive value, referenced by the blueprint)
-- Screenshot: `docs/screenshots/04a-credentials-no-gcp.png` (the Torque Credentials UI for context on the credential-storage asymmetry, see Challenges section)
+![gcp_sa_key_json stored as a Space Parameter with masked value](docs/screenshots/04-parameter-store.png)
+*GCP service account JSON stored as a sensitive Space Parameter named `gcp_sa_key_json`. The blueprint references it via `{{ .params.gcp_sa_key_json }}` so launch operators never see or paste the credential.*
+
+![Torque Credentials UI showing AWS, Azure, and Kubernetes tiles but no GCP](docs/screenshots/04a-credentials-no-gcp.png)
+*Torque's Credentials UI as of this exercise: AWS and Azure are first-class typed credential objects, but GCP is not. The Parameter Store path used here is the Quali-documented pattern for GCP, but the asymmetry is worth flagging during customer onboarding.*
 
 ### 5. Launch the environment
 
 Launched the blueprint with `gcp_project_id` set to my personal GCP project and the bucket prefix left at its default. The agent picked up the work, ran `terraform init` against the connected repo, then `apply`, and reported a `Running` state on the environment.
 
-- Screenshot: `docs/screenshots/07-launch-logs.png` (Torque grain execution logs)
-- Screenshot: `docs/screenshots/08-environment-running.png` (environment status)
-- Screenshot: `docs/screenshots/09-gcs-bucket-in-console.png` (provisioned bucket in the GCP console)
+![Torque grain execution log with terraform apply output](docs/screenshots/07-launch-logs.png)
+*Per-step logs for the Terraform grain. Each step (Prepare, Init, Plan, Apply, etc.) is captured separately and stays available for post-run review.*
+
+![Operation Hub showing the gcs_bucket grain Active and environment Running](docs/screenshots/08-environment-running.png)
+*Environment reached Active state with the gcs_bucket grain Completed. All log entries on the right show Completed status.*
+
+![GCS bucket torque-demo-7b98b3c6 visible in the GCP console](docs/screenshots/09-gcs-bucket-in-console.png)
+*The Terraform-managed bucket in the GCP console: `us-central1`, Standard class, Soft Delete + Object Versioning enabled, public access prevention enforced. Settings match the module exactly.*
 
 ### 6. Surface outputs
 
 The four module outputs (`bucket_name`, `bucket_url`, `bucket_self_link`, `bucket_location`) are captured by the grain and re-exposed at the blueprint level. They appear in the environment details panel after the launch completes.
 
-- Screenshot: `docs/screenshots/10-environment-outputs.png`
+![Environment Quick Links panel showing the four bucket outputs with values](docs/screenshots/10-environment-outputs.png)
+*Outputs surfaced in the environment's Quick Links: `bucket_name`, `bucket_url`, `bucket_self_link`, `bucket_location`. Values flow from the Terraform module outputs through the grain spec to the environment-level outputs.*
 
 ## Challenges & workarounds
 
@@ -139,6 +163,10 @@ Worth flagging for customer adoption: the agent's host cluster needs to be sized
 
 In a customer engagement I'd flag this asymmetry early during onboarding for any GCP-heavy team. It's not a blocker (the pattern works fine and is officially supported), but it does mean GCP customers don't get the structured sub-field references that AWS/Azure customers do (e.g., `{{ .credentials.<name>.access_key }}`). A first-class GCP credential type with fields like `service_account_email` and `private_key` would close that gap and make the customer experience symmetric across the big three clouds. See `docs/screenshots/04a-credentials-no-gcp.png` for the current Credentials UI state.
 
+**Helm grain hit Kubernetes RBAC.** Once the cross-grain reference plumbing was working and the Helm grain actually ran, it failed on the first attempt because the Torque agent's service account (`default:default`, per the agent-install workaround) had no Kubernetes permissions. The error was unambiguous (see `docs/screenshots/11-helm-rbac-failure.png`): `secrets is forbidden: User "system:serviceaccount:default:default" cannot list resource "secrets"`. Helm 3 stores release metadata as Secrets in the target namespace and needs to list them on every `helm upgrade -i`. Resolved with a namespace-scoped RoleBinding granting the `admin` ClusterRole to that SA within the `default` namespace (see `docs/screenshots/11a-helm-rbac-fix.png` for the applied binding). See the Production Hardening Considerations section for the deeper RBAC discussion this exposed.
+
+**Blueprint Designer flagged cross-grain output references as unresolvable at design time.** Three validation errors appeared in the Blueprint Designer of the form `Value '{{ .grains.gcs_bucket.outputs.bucket_name }}' of field '...->gcsBucket' can't be resolved`. Both grains still showed as Valid individually and the launch button was enabled, so this is a non-blocking static-analysis warning (Torque can't introspect the Terraform module's actual outputs at design time, only the grain's declared `outputs:` list). At runtime the references resolved correctly and the Helm grain received the actual bucket name. Worth knowing for customer demos: don't be alarmed by these warnings, but also worth feedback to Quali that runtime-only references should probably be styled differently than hard errors in the UI.
+
 **Runner authentication fell back to node metadata server on first auth attempt.** Initially wired the SA key through Torque's `env_vars` block as `GOOGLE_CREDENTIALS`, which is a documented Terraform Google provider env var. The launch failed with `Error 403: Provided scope(s) are not authorized, forbidden` on the bucket create (see `docs/screenshots/07b-second-failure-auth-scope.png`). That exact error is the signature of OAuth-scope-restricted credentials, specifically the GKE node's default metadata server token (read-only storage scope), not a service account key (which has no OAuth scopes). Diagnostic conclusion: the env-var injection was being silently dropped or rendered empty, and the Google provider was falling back to ADC.
 
 Fix: switched to passing the credential JSON as an explicit Terraform variable wired directly into the provider's `credentials` argument. This is more robust because it routes auth through Terraform's own variable system instead of relying on the runner's env-var passthrough behaving as expected. The fix is also the better engineering pattern independent of this bug: explicit, testable, and visible in the module's interface. Worth noting that this is the path Quali's docs and blog content recommend for GCP, so it lands us back on the documented happy path rather than improvising.
@@ -150,6 +178,7 @@ A few things this blueprint does not yet do that I'd want before recommending th
 - **Credential scope.** The service account key used here has broad Storage Admin permissions. In a customer engagement I'd push for either Workload Identity Federation between the Torque agent's K8s cluster and GCP (no static keys at all), or at minimum a per-blueprint SA scoped to a single resource group with key rotation enforced.
 - **State storage.** Terraform state is held by Torque. For multi-team customer environments I'd want to understand Torque's state isolation guarantees (per-environment encryption, access control on read) and the recovery story if Torque's control plane is unreachable.
 - **Agent isolation.** A single agent running blueprints across multiple customer projects is a blast-radius concern. The right pattern is one agent per security boundary (per tenant, per environment class). Worth surfacing early in a customer's adoption plan.
+- **Agent service account RBAC.** The Helm grain in this submission failed on first attempt with `secrets is forbidden: User "system:serviceaccount:default:default" cannot list resource "secrets"`. The Torque agent was configured (per the documented workaround for the empty-dropdown issue) to run as the `default:default` service account, which has no permissions in Kubernetes by default. Helm 3 stores release metadata as Secrets and needs to list them on every `helm upgrade -i`. Resolved with a single namespace-scoped RoleBinding (`kubectl create rolebinding torque-agent-helm-admin --clusterrole=admin --serviceaccount=default:default --namespace=default`). For a real customer engagement I'd push for a dedicated service account with a minimal custom Role rather than the built-in `admin` ClusterRole, and I'd want the agent install wizard to surface the SA-permissions question explicitly rather than defaulting to `default:default`.
 - **Agent host sizing and capacity.** As documented in the Challenges section, the agent's host cluster has to be sized for both the long-running agent pod and the per-grain ephemeral runners. For a real engagement, recommend a baseline of at least two workload-class nodes with cluster autoscaler enabled, plus pod-level resource requests on the runner so the scheduler has accurate information. Cluster sizing is a footgun on a small cluster and easy to overlook until the first non-trivial launch fails.
 - **Bucket defaults.** `public_access_prevention=enforced` and `uniform_bucket_level_access=true` are in this module because they should be the default. A customer team retrofitting an existing TF estate into Torque should expect these as a gate, not as a code review nit.
 - **Secret references in YAML.** `{{ .params.gcp_sa_key_json }}` is fine, but in a real engagement I'd want a clear audit trail: who can read that parameter, when was it last rotated, and is its rotation tied to the SA key lifecycle in GCP. This is the kind of audit gap I'd want Torque to either solve natively or integrate with the customer's existing secrets manager.
@@ -167,11 +196,15 @@ The three points I'd lead with on a discovery call after this exercise:
 
 ## What I'd build next
 
-If I had another hour, the natural extension is a second grain that consumes the GCS bucket's output. A trivial example would be a Helm chart that deploys a small workload with an init container that writes a marker object into the new bucket, demonstrating output passing between grains. That would also surface Torque's dependency model (grain B depends on grain A) and is the shape of nearly every real customer environment, where infra grains feed app grains.
+The Helm grain bonus already demonstrates output passing between grains within a single blueprint. The next extension I'd reach for, which I'd estimate at a half day rather than an hour, is an environment-tear-down workflow with a GitHub Actions trigger that calls the Torque API. This closes the GitOps loop and demonstrates the patterns customers actually want for ephemeral preview environments.
 
-A second extension worth building, which I'd estimate at a half day rather than an hour: an environment-tear-down workflow with a GitHub Actions trigger that calls the Torque API. This closes the GitOps loop and demonstrates the patterns customers actually want for ephemeral preview environments.
+After that, the natural sequence is multi-environment promotion: a single blueprint launching parallel dev / stage / prod environments with environment-scoped parameters and different agent assignments per stage. That's where Torque's value proposition gets concrete for an SRE org that's been wrestling with Terraform workspaces and CI-driven deploys.
 
-## CI/CD bonus
+## Bonus extensions
+
+The PDF offers a bonus for a CI/CD hook OR a second grain. Both are included.
+
+### CI/CD bonus: GitHub Actions Terraform validation
 
 The workflow at `.github/workflows/terraform-validate.yml` runs on every pull request and every push to `main` that touches `terraform/`. It performs:
 
@@ -180,6 +213,34 @@ The workflow at `.github/workflows/terraform-validate.yml` runs on every pull re
 - `tflint --recursive` for opinionated lint with the default ruleset
 
 The intent is to catch the boring failures (forgotten variables, drifted formatting, invalid HCL) before the agent picks the module up. In a real engagement I'd extend this with `tfsec` or `checkov` for security policy enforcement and `terraform plan` against a long-lived `plan-only` workspace for diff review on PRs.
+
+### Second grain bonus: Helm chart with cross-grain output reference
+
+The blueprint also composes a `kind: helm` grain alongside the Terraform grain. The Helm chart at `helm/bucket-info/` deploys a single ConfigMap into the GKE cluster the agent is running on. The ConfigMap's data fields are populated at deploy time from the Terraform grain's outputs:
+
+```yaml
+# inside the blueprint, helm grain spec
+inputs:
+  - gcsBucket:         '{{ .grains.gcs_bucket.outputs.bucket_name }}'
+  - gcsBucketUrl:      '{{ .grains.gcs_bucket.outputs.bucket_url }}'
+  - gcsBucketLocation: '{{ .grains.gcs_bucket.outputs.bucket_location }}'
+  - environmentName:   '{{ envid | downcase }}'
+```
+
+This is a deliberately tiny Helm payload (no pods, no images, no service exposure) because the point is the orchestration pattern, not the workload. Two things to call out about the result:
+
+1. **Torque resolves the cross-grain dependency automatically.** I did not need a `depends-on` directive on the Helm grain. The output reference is sufficient for Torque to sequence the Helm grain after the Terraform grain.
+2. **The Helm grain targets the same cluster the agent runs in.** Because `agent.name` selects an agent that's already inside the cluster, no separate kubeconfig wiring is required. This is the simplest Helm deployment story for a customer onboarding into Torque on K8s: agent and workload in the same cluster, sized appropriately.
+
+In a real customer engagement this is the shape of nearly every environment definition: an infrastructure grain (Terraform / CloudFormation) produces outputs that an application grain (Helm / kubectl / scripts) consumes. Demonstrating it on a hello-world payload here lets the reviewer focus on the wiring, not the workload.
+
+Evidence of the end-to-end composition:
+
+![Operation Hub showing both gcs_bucket and bucket_info_helm grains Active with a dependency arrow](docs/screenshots/12-both-grains-active.png)
+*Both grains Active in the same environment. The arrow between them is Torque's visualization of the `depends-on` relationship: the Helm grain waited for the Terraform grain to finish and emit its outputs.*
+
+![ConfigMap in GCP Console showing the actual bucket name passed across grains](docs/screenshots/13-configmap-with-bucket-data.png)
+*The ConfigMap in the GCP Console Kubernetes Engine view. The `gcs_bucket` data field contains `torque-demo-8b6055be`, the actual name of the bucket the Terraform grain created on the same launch. The bucket name was passed across grains at runtime via `{{ .grains.gcs_bucket.outputs.bucket_name }}`, not hardcoded.*
 
 ---
 
