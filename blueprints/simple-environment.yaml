@@ -77,9 +77,12 @@ grains:
   # demonstrates two Torque features at once:
   #   1) Grain composition across different IaC kinds (terraform + helm)
   #   2) Cross-grain output passing via {{ .grains.X.outputs.Y }}
-  # Torque resolves the dependency automatically because of the output reference.
+  # Explicit depends-on tells Torque the Helm grain must wait for the
+  # Terraform grain to complete and emit outputs before its own input
+  # references are resolved.
   bucket_info_helm:
     kind: helm
+    depends-on: gcs_bucket
     spec:
       source:
         store: torque-takehome-justo
