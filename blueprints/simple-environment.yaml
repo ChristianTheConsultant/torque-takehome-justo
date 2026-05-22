@@ -1,0 +1,77 @@
+spec_version: 2
+
+description: |
+  Simple Torque environment that provisions a Google Cloud Storage bucket via
+  a Terraform grain. Demonstrates Torque's IaC orchestration model end-to-end:
+  connected repo -> Terraform module discovered as a grain -> blueprint
+  composes the grain with inputs and exposes outputs to the environment UI.
+
+inputs:
+
+  agent:
+    type: agent
+    description: Torque K8s agent that will execute the Terraform grain.
+
+  gcp_project_id:
+    type: string
+    description: GCP project ID where the bucket will be created.
+
+  gcp_region:
+    type: string
+    default: us-central1
+    description: GCP region used as the bucket location.
+
+  bucket_name_prefix:
+    type: string
+    default: torque-demo
+    description: |
+      Prefix for the bucket name. The Terraform module appends an 8-character
+      random hex suffix to ensure global uniqueness across launches.
+
+grains:
+
+  gcs_bucket:
+    kind: terraform
+    spec:
+      source:
+        # 'store' is the friendly name of the connected repo in Torque.
+        # Update if you connect this repo under a different name.
+        store: torque-takehome-justo
+        path: terraform
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      env_vars:
+        # GOOGLE_CREDENTIALS holds the full JSON contents of a GCP service
+        # account key, sourced from Torque's Parameter Store. Never paste the
+        # JSON directly into this YAML - store it as a parameter named
+        # 'gcp_sa_key_json' in the Torque account/space.
+        - GOOGLE_CREDENTIALS: '{{ .params.gcp_sa_key_json }}'
+        - GOOGLE_PROJECT: '{{ .inputs.gcp_project_id }}'
+
+      inputs:
+        - project_id: '{{ .inputs.gcp_project_id }}'
+        - region: '{{ .inputs.gcp_region }}'
+        - bucket_name_prefix: '{{ .inputs.bucket_name_prefix }}'
+        - force_destroy: 'true'
+
+      outputs:
+        - bucket_name
+        - bucket_url
+        - bucket_self_link
+        - bucket_location
+
+outputs:
+
+  bucket_name:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_name }}'
+
+  bucket_url:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_url }}'
+
+  bucket_self_link:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_self_link }}'
+
+  bucket_location:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_location }}'

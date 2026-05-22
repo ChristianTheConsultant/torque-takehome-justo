@@ -1,0 +1,25 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# Note: .terraform.lock.hcl IS committed (provider version pinning).
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Secrets - never commit GCP service account keys
+gcp-sa-key*.json
+*-credentials.json
