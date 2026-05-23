@@ -60,7 +60,7 @@ After applying the manifest, the agent registered itself with the Torque control
 *GKE cluster `torque-agent-host` provisioned in `us-central1-a`. Single-node default pool was later rolled to `e2-standard-2`; see Challenges section.*
 
 ![kubectl get nodes and kubectl get pods -A against the new cluster](docs/screenshots/00b-gke-kubectl-verified.png)
-*kubectl pointed at the new cluster, nodes Ready, all system pods Running. Ready to apply the Torque agent manifest.*
+*kubectl pointed at the new cluster, node Ready, kube-system pods still coming up (mix of Running, ContainerCreating, and Init states). Cluster is operational and ready to accept the Torque agent manifest; system pods finish stabilizing within a minute or two.*
 
 ![Torque UI showing the agent torque-agent-gcp Connected as type GKE](docs/screenshots/01-agent-healthy.png)
 *Agent connected to the Torque control plane with default namespace and default service account, type GKE.*
@@ -77,9 +77,11 @@ The module under [`terraform/`](./terraform/) provisions a single `google_storag
 | `lifecycle_rule` | delete after 5 newer versions | Caps storage cost on a versioned bucket that nobody is curating. |
 | `force_destroy` | variable, default `true` | Safe for demo. In production this should default to `false` and be flipped explicitly per-environment. |
 | `labels` | `managed_by=torque, blueprint=simple-environment, iac=terraform` | Cost attribution and ownership. |
-| Random hex suffix | 4 bytes via `random_id` | GCS bucket names are globally unique; this lets the blueprint be launched repeatedly without input collisions. |
+| Random hex suffix | 4 bytes via `random_id` | GCS bucket names are globally unique; the suffix lets the blueprint be launched repeatedly without input collisions. See the note below for the lifecycle trade-off this implies. |
 
 Provider versions are pinned in `versions.tf` (`google ~> 5.0`, `random ~> 3.5`, Terraform `>= 1.3.0, < 2.0.0`). The lock file (`.terraform.lock.hcl`) is intentionally committed so the agent uses the same provider builds I tested with.
+
+**On the random suffix and bucket lifecycle.** The `random_id` resource is stable within a single Torque environment's lifetime (re-apply doesn't change it), but a fresh environment launch starts from empty Terraform state and therefore gets a new suffix and a new bucket. Combined with `force_destroy=true`, this means ending and relaunching the environment destroys the old bucket and creates a new one. That shape is correct for the Environment-as-a-Service pattern Torque is built around: ephemeral resources tied to ephemeral environments, with no stale infrastructure left behind. It would be the wrong shape if the bucket were meant to hold persistent data outside the environment's lifecycle (production artifacts, customer uploads, etc.). For a persistent-storage use case the module would drop the `random_id` suffix entirely, require a stable name from the input, default `force_destroy` to `false`, and the operator would be expected to import the existing bucket rather than re-create it on each launch.
 
 ![GitHub Actions Terraform Validation workflow green check on initial commit](docs/screenshots/02-github-actions-green.png)
 *CI workflow validates fmt, init, validate, and tflint against the Terraform module on every push and pull request. Initial commit passed in 11 seconds.*
