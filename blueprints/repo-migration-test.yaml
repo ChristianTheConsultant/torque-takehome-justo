@@ -1,0 +1,145 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Repository-migration test blueprint
+#
+# Purpose: carry a full set of catalog metadata so that re-pointing the
+# connected repository to a new Git URL can be verified as a no-op from the
+# Automation Inventory > Blueprints table. Compare this blueprint's row
+# (Icon, Self-Service, Building Block, Display Name, Labels) before and
+# after the swap. See docs/repo-migration-test.md for the procedure.
+#
+# The grain is deliberately trivial (one GCS bucket from the shared
+# terraform/ module) so the blueprint stays launchable and cheap.
+# ---------------------------------------------------------------------------
+
+description: |
+  Repository-migration test blueprint. Provisions a single Google Cloud
+  Storage bucket via the shared terraform/ module. Its real purpose is to
+  carry catalog metadata (display name, labels, icon, instructions) that
+  must remain unchanged after the connected repository is migrated to a
+  new URL.
+
+# Catalog metadata that is read from this file on every repository sync.
+# After the migration these values should be identical because the new
+# repository contains the same file. Anything set in the UI instead
+# (Self-Service publish, Building Block, extra labels) is stored by Torque
+# and is the part of the test most likely to surface a problem.
+metadata:
+  display-name: "Repo Migration Test (GCS Bucket)"
+
+  # Self-Service is intentionally left to the UI/API so the test exercises
+  # Torque's persisted publish state rather than a value re-read from YAML.
+  # Uncomment to publish automatically on sync. Caveat from the schema docs:
+  # once self-service is set in YAML it can no longer be changed via UI or
+  # API in any space.
+  # self-service: true
+
+  blueprint-labels:
+    - key: migration-test
+      initial-color: orange
+      initial-quick-filter: true
+    - key: cloud
+      value: gcp
+      initial-color: blue
+    - key: iac
+      value: terraform
+      initial-color: teal
+
+  icon:
+    path: graphics/repo-migration-test.svg
+
+# Shown on the blueprint's Instructions tab and on the catalog card.
+instructions:
+  text: |
+    ## Repo migration test
+
+    This blueprint exists to verify that catalog metadata survives a
+    repository URL migration. Before launching anything, record the
+    Automation Inventory row for this blueprint (icon, self-service,
+    building block, display name, labels), perform the repository swap,
+    re-sync, and confirm the row is unchanged.
+
+    Launching it provisions one versioned, private GCS bucket. The bucket
+    name is the prefix you supply plus a random 8-character suffix.
+
+# Environment labels (applied to launched environments, not to the catalog
+# item). Kept here so the two label types can be told apart during testing.
+labels:
+  - test-suite: repo-migration
+  - managed-by: torque
+
+inputs:
+
+  agent:
+    type: agent
+    description: Torque Kubernetes agent that will execute the Terraform grain.
+
+  gcp_project_id:
+    type: string
+    description: GCP project ID where the bucket will be created.
+
+  gcp_region:
+    type: string
+    default: us-central1
+    description: GCP region used as the bucket location.
+    allowed-values:
+      - us-central1
+      - us-east1
+      - us-west1
+      - europe-west1
+
+  bucket_name_prefix:
+    type: string
+    default: repo-migration-test
+    description: |
+      Prefix for the bucket name. The Terraform module appends an 8-character
+      random hex suffix so repeated launches never collide.
+
+grains:
+
+  gcs_bucket:
+    kind: terraform
+    spec:
+      source:
+        # 'store' is the repository's name as registered in Torque, not its
+        # URL. If the migration re-registers the repository under a new name,
+        # this value must change too; if only the URL/credentials change, it
+        # stays as is.
+        store: torque-takehome-justo
+        path: terraform
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      env-vars:
+        - GOOGLE_PROJECT: '{{ .inputs.gcp_project_id }}'
+
+      inputs:
+        - project_id: '{{ .inputs.gcp_project_id }}'
+        - region: '{{ .inputs.gcp_region }}'
+        - bucket_name_prefix: '{{ .inputs.bucket_name_prefix }}'
+        - force_destroy: 'true'
+        # Service-account JSON comes from the Space Parameter Store so the
+        # credential never appears in the launch form or in this file.
+        - gcp_credentials_json: '{{ .params.gcp_sa_key_json }}'
+
+      outputs:
+        - bucket_name
+        - bucket_url
+        - bucket_location
+
+outputs:
+
+  bucket_name:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_name }}'
+
+  bucket_url:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_url }}'
+
+  bucket_location:
+    value: '{{ .grains.gcs_bucket.outputs.bucket_location }}'
+
+  console_url:
+    value: 'https://console.cloud.google.com/storage/browser/{{ .grains.gcs_bucket.outputs.bucket_name }}'
+    kind: link

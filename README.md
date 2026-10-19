@@ -19,7 +19,10 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   ├── outputs.tf                            outputs exposed back to Torque
 │   └── versions.tf                           provider and Terraform pinning
 ├── blueprints/
-│   └── simple-environment.yaml               Torque blueprint (spec_version 2)
+│   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
+│   └── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
+├── graphics/
+│   └── repo-migration-test.svg               custom catalog icon used by that blueprint
 ├── helm/                                     bonus grain: Helm chart for K8s
 │   └── bucket-info/
 │       ├── Chart.yaml
@@ -28,6 +31,7 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │           └── configmap.yaml                ConfigMap stamped with bucket name
 ├── .github/workflows/
 │   └── terraform-validate.yml                fmt + validate + tflint on PR/push
+├── docs/repo-migration-test.md               repository URL migration test procedure
 ├── docs/screenshots/                         end-to-end run evidence
 └── .gitignore                                blocks state, tfvars, and SA keys
 ```
@@ -243,6 +247,10 @@ Evidence of the end-to-end composition:
 
 ![ConfigMap in GCP Console showing the actual bucket name passed across grains](docs/screenshots/13-configmap-with-bucket-data.png)
 *The ConfigMap in the GCP Console Kubernetes Engine view. The `gcs_bucket` data field contains `torque-demo-8b6055be`, the actual name of the bucket the Terraform grain created on the same launch. The bucket name was passed across grains at runtime via `{{ .grains.gcs_bucket.outputs.bucket_name }}`, not hardcoded.*
+
+### Repository migration test blueprint
+
+A second blueprint, [`blueprints/repo-migration-test.yaml`](./blueprints/repo-migration-test.yaml), reuses the same Terraform module but exists to carry catalog metadata: a display name, three colored blueprint labels, a custom SVG icon from [`graphics/`](./graphics/), and an Instructions tab. It is the test subject for verifying that a connected repository can be re-pointed to a new Git URL without changing anything in the Automation Inventory. The procedure, including which fields Torque re-reads from the file versus stores itself, and a snapshot/diff script against the API, is in [`docs/repo-migration-test.md`](./docs/repo-migration-test.md).
 
 ---
 

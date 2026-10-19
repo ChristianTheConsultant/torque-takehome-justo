@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Repo migration test: storage bucket with swap arrows">
+  <title>repo-migration-test</title>
+  <!-- bucket body -->
+  <path d="M14 18h36l-4 34H18z" fill="#F29A2E"/>
+  <!-- bucket rim -->
+  <ellipse cx="32" cy="18" rx="18" ry="5" fill="#FFC46B"/>
+  <!-- swap arrows -->
+  <g fill="none" stroke="#1F2A44" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 30h16l-4-4"/>
+    <path d="M40 40H24l4 4"/>
+  </g>
+</svg>
