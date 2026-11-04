@@ -73,6 +73,7 @@ inputs:
 
   agent:
     type: agent
+    default: gke-demo-prod
     description: Torque Kubernetes agent that will execute the Terraform grain.
 
   gcp_project_id:

@@ -44,9 +44,9 @@ instructions:
   text: |
     ## Next.js on EC2 + RDS
 
-    **Prerequisites:** the Space Parameter Store needs `aws_access_key_id`
-    and `aws_secret_access_key` (mark both sensitive) for an IAM user or
-    role that can manage VPC, EC2, RDS, IAM roles and SSM parameters.
+    **Prerequisites:** an agent on AWS whose default service account maps
+    to an IAM role (IRSA) that can manage VPC, EC2, RDS, IAM roles and SSM
+    parameters.
 
     First launch takes **10-15 minutes**: RDS provisioning (~6 min) runs in
     parallel with the instance installing Node.js and running `next build`.
@@ -69,6 +69,7 @@ inputs:
 
   agent:
     type: agent
+    default: demo-prod
     description: Torque Kubernetes agent that will execute the Terraform grain.
 
   aws_region:
@@ -132,15 +133,14 @@ grains:
       agent:
         name: '{{ .inputs.agent }}'
 
-      # AWS credentials come from the Space Parameter Store so they never
-      # appear in the launch form or this file. To use a Torque cloud
-      # account credential (or the agent's IAM role) instead, delete these
-      # two lines and add:
-      #   authentication:
-      #     - <credential-name>
-      env-vars:
-        - AWS_ACCESS_KEY_ID: '{{ .params.aws_access_key_id }}'
-        - AWS_SECRET_ACCESS_KEY: '{{ .params.aws_secret_access_key }}'
+      # No credentials are set here: the runner pod uses the agent's default
+      # service account, whose IAM role (IRSA on EKS) supplies the AWS
+      # credentials. That role needs rights to manage VPC, EC2, RDS, IAM
+      # roles/instance profiles and SSM parameters. To use static keys
+      # instead, add:
+      #   env-vars:
+      #     - AWS_ACCESS_KEY_ID: '{{ .params.aws_access_key_id }}'
+      #     - AWS_SECRET_ACCESS_KEY: '{{ .params.aws_secret_access_key }}'
 
       inputs:
         - name_prefix: 'nextjs-{{ envId | downcase }}'
