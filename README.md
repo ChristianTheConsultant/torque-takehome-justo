@@ -13,14 +13,17 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 ```
 .
 ├── README.md                                 you are here
-├── terraform/                                the grain: a self-contained TF module
-│   ├── main.tf                               GCS bucket resource + random suffix
-│   ├── variables.tf                          inputs with type + validation
-│   ├── outputs.tf                            outputs exposed back to Torque
-│   └── versions.tf                           provider and Terraform pinning
+├── terraform/                                one self-contained TF module per folder
+│   ├── gcs-bucket-sample/                    the grain: GCS bucket module
+│   │   ├── main.tf                           GCS bucket resource + random suffix
+│   │   ├── variables.tf                      inputs with type + validation
+│   │   ├── outputs.tf                        outputs exposed back to Torque
+│   │   └── versions.tf                       provider and Terraform pinning
+│   └── aws-nextjs-rds/                       AWS test module: VPC + EC2 Next.js + RDS Postgres
 ├── blueprints/
 │   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
-│   └── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
+│   ├── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
+│   └── aws-nextjs-rds.yaml                   Next.js on EC2 + RDS test blueprint (docs/aws-nextjs-rds.md)
 ├── graphics/
 │   └── repo-migration-test.svg               custom catalog icon used by that blueprint
 ├── helm/                                     bonus grain: Helm chart for K8s
@@ -44,7 +47,7 @@ The assignment allows AWS, Azure, or GCP. I chose GCS (Google Cloud Storage) bec
 
 Three Torque primitives compose the environment:
 
-1. **Repository.** This Git repo is registered in Torque as a source. Torque's asset discovery walks the tree and identifies both the Terraform module at `terraform/` and the Helm chart at `helm/bucket-info/` as grain candidates.
+1. **Repository.** This Git repo is registered in Torque as a source. Torque's asset discovery walks the tree and identifies both the Terraform module at `terraform/gcs-bucket-sample/` and the Helm chart at `helm/bucket-info/` as grain candidates.
 2. **Grains.** Two grains are composed in the same blueprint: a `kind: terraform` grain that provisions the GCS bucket, and a `kind: helm` grain that deploys a ConfigMap into the K8s cluster the agent is running on. The Helm grain reads outputs from the Terraform grain (`{{ .grains.gcs_bucket.outputs.bucket_name }}`) and stamps them into the ConfigMap data. Torque resolves the cross-grain dependency automatically via the output reference: the Helm grain doesn't run until the Terraform grain has reported its outputs.
 3. **Blueprint.** The blueprint at `blueprints/simple-environment.yaml` defines the operator-facing inputs (project, region, bucket prefix, namespace, agent selection), composes the two grains, and re-exposes the Terraform outputs at the environment level so they appear in the Torque UI.
 
@@ -71,7 +74,7 @@ After applying the manifest, the agent registered itself with the Torque control
 
 ### 2. Create and commit the Terraform module
 
-The module under [`terraform/`](./terraform/) provisions a single `google_storage_bucket` resource with the following non-default settings, each of which I'd justify in a customer conversation:
+The module under [`terraform/gcs-bucket-sample/`](./terraform/gcs-bucket-sample/) provisions a single `google_storage_bucket` resource with the following non-default settings, each of which I'd justify in a customer conversation:
 
 | Setting | Value | Why |
 |---|---|---|
@@ -83,7 +86,7 @@ The module under [`terraform/`](./terraform/) provisions a single `google_storag
 | `labels` | `managed_by=torque, blueprint=simple-environment, iac=terraform` | Cost attribution and ownership. |
 | Random hex suffix | 4 bytes via `random_id` | GCS bucket names are globally unique; the suffix lets the blueprint be launched repeatedly without input collisions. See the note below for the lifecycle trade-off this implies. |
 
-Provider versions are pinned in `versions.tf` (`google ~> 5.0`, `random ~> 3.5`, Terraform `>= 1.3.0, < 2.0.0`). The lock file (`.terraform.lock.hcl`) is intentionally committed so the agent uses the same provider builds I tested with.
+Provider versions are pinned in `versions.tf` (`google ~> 5.0`, `random ~> 3.5`, Terraform `>= 1.3.0, < 2.0.0`).
 
 **On the random suffix and bucket lifecycle.** The `random_id` resource is stable within a single Torque environment's lifetime (re-apply doesn't change it), but a fresh environment launch starts from empty Terraform state and therefore gets a new suffix and a new bucket. Combined with `force_destroy=true`, this means ending and relaunching the environment destroys the old bucket and creates a new one. That shape is correct for the Environment-as-a-Service pattern Torque is built around: ephemeral resources tied to ephemeral environments, with no stale infrastructure left behind. It would be the wrong shape if the bucket were meant to hold persistent data outside the environment's lifecycle (production artifacts, customer uploads, etc.). For a persistent-storage use case the module would drop the `random_id` suffix entirely, require a stable name from the input, default `force_destroy` to `false`, and the operator would be expected to import the existing bucket rather than re-create it on each launch.
 
@@ -214,7 +217,7 @@ The PDF offers a bonus for a CI/CD hook OR a second grain. Both are included.
 
 The workflow at `.github/workflows/terraform-validate.yml` runs on every pull request and every push to `main` that touches `terraform/`. It performs:
 
-- `terraform fmt -check -recursive -diff` for format gating
+- `terraform fmt -check -diff` for format gating, run per module via a job matrix (one job per folder under `terraform/`)
 - `terraform init -backend=false` + `terraform validate` for syntax and provider consistency
 - `tflint --recursive` for opinionated lint with the default ruleset
 

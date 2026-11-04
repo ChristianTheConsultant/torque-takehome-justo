@@ -1,0 +1,53 @@
+:root {
+  --bg: #f7f7f5;
+  --fg: #1c1c1a;
+  --muted: #6b6b66;
+  --card: #ffffff;
+  --border: #e4e4df;
+  --ok: #1f8a4c;
+  --err: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615;
+    --fg: #ededea;
+    --muted: #9a9a94;
+    --card: #1f1f1d;
+    --border: #2e2e2b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main { max-width: 860px; margin: 0 auto; padding: 48px 20px; }
+.eyebrow { color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; margin: 0; }
+h1 { font-size: 28px; margin: 6px 0 24px; }
+h2 { font-size: 16px; margin: 32px 0 12px; }
+
+.status { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); font-weight: 600; }
+.status .dot { width: 10px; height: 10px; border-radius: 50%; }
+.status.ok .dot { background: var(--ok); }
+.status.err .dot { background: var(--err); }
+.status.err { color: var(--err); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.stat .value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .label { color: var(--muted); font-size: 13px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+th { color: var(--muted); font-weight: 600; }
+td.ua { color: var(--muted); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+footer { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 40px; color: var(--muted); font-size: 12px; }
+footer a { color: inherit; }

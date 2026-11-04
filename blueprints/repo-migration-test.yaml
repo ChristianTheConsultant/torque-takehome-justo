@@ -107,7 +107,7 @@ grains:
         # this value must change too; if only the URL/credentials change, it
         # stays as is.
         store: torque-takehome-justo
-        path: terraform
+        path: terraform/gcs-bucket-sample
 
       agent:
         name: '{{ .inputs.agent }}'

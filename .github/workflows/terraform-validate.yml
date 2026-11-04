@@ -13,11 +13,17 @@ on:
 
 jobs:
   validate:
-    name: fmt + validate + tflint
+    name: fmt + validate + tflint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - terraform/gcs-bucket-sample
+          - terraform/aws-nextjs-rds
     defaults:
       run:
-        working-directory: terraform
+        working-directory: ${{ matrix.module }}
 
     steps:
       - name: Checkout
@@ -29,7 +35,7 @@ jobs:
           terraform_version: 1.5.5
 
       - name: terraform fmt
-        run: terraform fmt -check -recursive -diff
+        run: terraform fmt -check -diff
 
       - name: terraform init (no backend, providers only)
         run: terraform init -backend=false
@@ -45,4 +51,4 @@ jobs:
       - name: tflint
         run: |
           tflint --init
-          tflint --recursive --format compact
+          tflint --format compact

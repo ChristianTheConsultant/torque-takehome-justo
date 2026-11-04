@@ -45,7 +45,7 @@ grains:
         # 'store' is the friendly name of the connected repo in Torque.
         # Update if you connect this repo under a different name.
         store: torque-takehome-justo
-        path: terraform
+        path: terraform/gcs-bucket-sample
 
       agent:
         name: '{{ .inputs.agent }}'

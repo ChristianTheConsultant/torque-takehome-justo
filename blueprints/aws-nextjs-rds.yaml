@@ -1,0 +1,189 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Next.js on EC2 with an RDS PostgreSQL backend
+#
+# Proof-of-functionality test blueprint. One Terraform grain builds a small
+# dedicated VPC, a single-AZ db.t4g.micro PostgreSQL instance and a t3
+# EC2 instance that installs Node.js, builds a Next.js app and serves it on
+# port 80. The grain only completes once the app answers its health check,
+# so an Active environment means the full stack (browser -> EC2 -> RDS)
+# actually works.
+#
+# Leave app_repo_url empty to deploy the built-in demo app
+# (terraform/aws-nextjs-rds/demo-app), which writes a row to RDS on every
+# page view and shows the result. Point it at any public Next.js repo to
+# deploy that instead.
+#
+# Approximate cost in us-east-1 while running (on-demand):
+#   t3.small ~$0.021/h + db.t4g.micro ~$0.016/h + storage/public IPv4
+#   ~$0.01/h  =>  roughly $0.05/hour, ~$1.20/day. No NAT gateway, no ALB.
+# ---------------------------------------------------------------------------
+
+description: |
+  Test environment: a Next.js app on a small EC2 instance backed by an RDS
+  PostgreSQL database, in its own VPC. Deploys a built-in demo app that
+  proves the EC2 -> RDS round trip, or any public Next.js git repo.
+  Sized for minimum cost (t3 + db.t4g.micro, no NAT gateway, no load
+  balancer).
+
+metadata:
+  display-name: "Next.js on EC2 + RDS (AWS test)"
+  blueprint-labels:
+    - key: cloud
+      value: aws
+      initial-color: orange
+    - key: iac
+      value: terraform
+      initial-color: teal
+    - key: app
+      value: nextjs
+      initial-color: blue
+
+instructions:
+  text: |
+    ## Next.js on EC2 + RDS
+
+    **Prerequisites:** the Space Parameter Store needs `aws_access_key_id`
+    and `aws_secret_access_key` (mark both sensitive) for an IAM user or
+    role that can manage VPC, EC2, RDS, IAM roles and SSM parameters.
+
+    First launch takes **10-15 minutes**: RDS provisioning (~6 min) runs in
+    parallel with the instance installing Node.js and running `next build`.
+    The environment turns Active only after the app responds.
+
+    Open the **app_url** output. The demo page shows a green "Database
+    connected" banner and a page-view counter stored in PostgreSQL;
+    refresh it to see the count increase. `/api/health` returns the same
+    check as JSON.
+
+    Debugging: run the `ssm_session_command` output, then
+    `sudo tail -f /var/log/nextjs-bootstrap.log` or
+    `sudo journalctl -u nextjs -f`.
+
+labels:
+  - test-suite: nextjs-rds
+  - managed-by: torque
+
+inputs:
+
+  agent:
+    type: agent
+    description: Torque Kubernetes agent that will execute the Terraform grain.
+
+  aws_region:
+    type: string
+    default: us-east-1
+    description: AWS region for the VPC, EC2 instance and RDS database.
+    allowed-values:
+      - us-east-1
+      - us-east-2
+      - us-west-2
+      - eu-west-1
+
+  instance_type:
+    type: string
+    default: t3.small
+    description: |
+      EC2 size. t3.small (2 GiB) builds most Next.js apps; t3.micro is
+      enough for the demo app (a swap file is added) but builds slowly.
+    allowed-values:
+      - t3.micro
+      - t3.small
+      - t3.medium
+
+  db_instance_class:
+    type: string
+    default: db.t4g.micro
+    description: RDS PostgreSQL instance class.
+    allowed-values:
+      - db.t4g.micro
+      - db.t3.micro
+
+  allowed_cidr:
+    type: string
+    default: 0.0.0.0/0
+    description: |
+      CIDR allowed to reach the app on port 80. Must include the Torque
+      agent's egress IP, because the grain health-checks the app before
+      finishing.
+
+  app_repo_url:
+    type: string
+    default: ""
+    description: |
+      Public HTTPS git URL of a Next.js app. Leave empty for the built-in
+      demo app that proves database connectivity.
+
+  app_git_ref:
+    type: string
+    default: main
+    description: Branch or tag to deploy from app_repo_url (ignored for the demo app).
+
+grains:
+
+  nextjs_stack:
+    kind: terraform
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: terraform/aws-nextjs-rds
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      # AWS credentials come from the Space Parameter Store so they never
+      # appear in the launch form or this file. To use a Torque cloud
+      # account credential (or the agent's IAM role) instead, delete these
+      # two lines and add:
+      #   authentication:
+      #     - <credential-name>
+      env-vars:
+        - AWS_ACCESS_KEY_ID: '{{ .params.aws_access_key_id }}'
+        - AWS_SECRET_ACCESS_KEY: '{{ .params.aws_secret_access_key }}'
+
+      inputs:
+        - name_prefix: 'nextjs-{{ envId | downcase }}'
+        - region: '{{ .inputs.aws_region }}'
+        - instance_type: '{{ .inputs.instance_type }}'
+        - db_instance_class: '{{ .inputs.db_instance_class }}'
+        - allowed_cidr: '{{ .inputs.allowed_cidr }}'
+        - app_repo_url: '{{ .inputs.app_repo_url }}'
+        - app_git_ref: '{{ .inputs.app_git_ref }}'
+        - additional_tags: '{ "torque_env_id": "{{ envId | downcase }}", "owner": "{{ ownerEmail }}" }'
+
+      outputs:
+        - app_url
+        - health_check_url
+        - health_check_response
+        - instance_id
+        - instance_public_ip
+        - ssm_session_command
+        - rds_endpoint
+        - rds_database_name
+        - database_url_parameter
+
+outputs:
+
+  app_url:
+    value: '{{ .grains.nextjs_stack.outputs.app_url }}'
+    kind: link
+
+  health_check_url:
+    value: '{{ .grains.nextjs_stack.outputs.health_check_url }}'
+    kind: link
+
+  health_check_response:
+    value: '{{ .grains.nextjs_stack.outputs.health_check_response }}'
+
+  instance_id:
+    value: '{{ .grains.nextjs_stack.outputs.instance_id }}'
+
+  ssm_session_command:
+    value: '{{ .grains.nextjs_stack.outputs.ssm_session_command }}'
+
+  rds_endpoint:
+    value: '{{ .grains.nextjs_stack.outputs.rds_endpoint }}'
+
+  database_url_parameter:
+    value: '{{ .grains.nextjs_stack.outputs.database_url_parameter }}'
