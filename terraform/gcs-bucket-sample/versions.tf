@@ -13,6 +13,9 @@ terraform {
   }
 }
 
+# credentials = null falls back to Application Default Credentials, which on
+# the Torque runner pod resolve to the agent's service account (Workload
+# Identity).
 provider "google" {
   project     = var.project_id
   region      = var.region

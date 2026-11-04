@@ -142,8 +142,8 @@ Inventory row looks the same as the "before" screenshot.
 
 Launching confirms that `source.store` still resolves to the migrated
 repository. It needs the same prerequisites as the original blueprint: a
-connected Kubernetes agent and the `gcp_sa_key_json` Space Parameter
-holding a service-account key (see the main README). The environment
+GKE agent (default `gke-demo-prod`) whose service account has GCP access
+through Workload Identity (see the main README). The environment
 creates one private, versioned GCS bucket and exposes a console link
 output. End the environment afterwards; `force_destroy` is set so the bucket
 is removed cleanly.

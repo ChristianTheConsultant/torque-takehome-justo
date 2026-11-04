@@ -33,7 +33,8 @@ variable "additional_labels" {
 }
 
 variable "gcp_credentials_json" {
-  description = "Full JSON contents of a GCP service account key. Wired directly into the Google provider's 'credentials' argument to bypass any env-var injection ambiguity. Sourced from Torque's Parameter Store; never paste into tfvars."
+  description = "Optional JSON contents of a GCP service account key. Leave null (the default) to use Application Default Credentials, i.e. the Torque agent's Kubernetes service account via GKE Workload Identity. Never paste a key into tfvars."
   type        = string
+  default     = null
   sensitive   = true
 }

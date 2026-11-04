@@ -121,9 +121,8 @@ grains:
         - region: '{{ .inputs.gcp_region }}'
         - bucket_name_prefix: '{{ .inputs.bucket_name_prefix }}'
         - force_destroy: 'true'
-        # Service-account JSON comes from the Space Parameter Store so the
-        # credential never appears in the launch form or in this file.
-        - gcp_credentials_json: '{{ .params.gcp_sa_key_json }}'
+        # No credentials are passed: the runner authenticates to GCP as the
+        # agent's service account through GKE Workload Identity.
 
       outputs:
         - bucket_name
