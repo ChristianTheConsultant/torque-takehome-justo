@@ -31,11 +31,13 @@ inputs:
 
   k8s_namespace:
     type: string
-    default: default
+    default: torque-sandboxes
     description: |
       Kubernetes namespace into which the Helm grain deploys its ConfigMap.
-      Defaults to 'default' which is also the Torque agent's default namespace,
-      so no additional RBAC plumbing is required for the demo.
+      Defaults to 'torque-sandboxes', the gke-demo-prod agent's own namespace,
+      where its runner service account (gke-sa) can manage the Secrets Helm
+      uses for release records. Another namespace needs a RoleBinding for
+      that service account first.
 
 grains:
 
