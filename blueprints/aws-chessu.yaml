@@ -1,0 +1,192 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# chessu: multiplayer chess on EC2 + RDS PostgreSQL
+#
+# Deploys https://github.com/dotnize/chessu (MIT) with the same Terraform
+# module as aws-nextjs-rds.yaml: a Next.js 14 client on port 80 plus an
+# Express/socket.io API on port 3001, both on one t3 instance, backed by a
+# single-AZ db.t4g.micro PostgreSQL. The API keeps users, finished games and
+# sessions in RDS; live games are held in memory.
+#
+# chessu-specific wiring (all in the grain inputs below):
+#   - pnpm is pinned to 9.15.9 (the repo has no packageManager field) and
+#     Next is bumped to the latest 14.2.x patch, since the lockfile pins
+#     14.2.5, which has known CVEs
+#   - the API reads the PG* env vars (it calls 'new pg.Pool()' with no
+#     config); the module's bootstrap exports them from DATABASE_URL
+#   - the API runs without NODE_ENV=production: in production mode chessu
+#     marks its session cookie Secure + SameSite=None, which a browser drops
+#     over plain HTTP and every socket gets disconnected. In dev mode the
+#     cookie is SameSite=Lax, which works because :80 and :3001 on the same
+#     IP are the same site
+#   - NEXT_PUBLIC_API_URL is baked into the client at build time, so it is
+#     built on the instance once the public IP is known
+#
+# Approximate cost in us-east-1 while running (on-demand): ~$0.05/hour.
+# ---------------------------------------------------------------------------
+
+description: |
+  Multiplayer chess (chessu: Next.js + Express/socket.io) on a small EC2
+  instance backed by RDS PostgreSQL, in its own VPC. Play in real time,
+  spectate and chat; accounts and game history are stored in PostgreSQL.
+  Sized for minimum cost (t3 + db.t4g.micro, no NAT gateway, no load
+  balancer).
+
+metadata:
+  display-name: "chessu: Multiplayer Chess (AWS EC2 + RDS)"
+  blueprint-labels:
+    - key: cloud
+      value: aws
+      initial-color: orange
+    - key: iac
+      value: terraform
+      initial-color: teal
+    - key: app
+      value: chessu
+      initial-color: purple
+
+instructions:
+  text: |
+    ## chessu on EC2 + RDS
+
+    First launch takes **10-15 minutes**: RDS provisioning runs in parallel
+    with the instance installing Node.js and building the client and API.
+    The environment turns Active only after both the web app and the API
+    (which connects to RDS before it starts listening) respond.
+
+    **To play:** open the **app_url** output, continue as a guest (or
+    register), create a game and copy its invite link. Open the link in a
+    second browser or private window, or send it to a colleague, and play.
+    Finished games appear on each player's profile, read back from RDS.
+
+    The app is plain HTTP on a public IP. Use a throwaway password if you
+    register an account.
+
+    Debugging: run the `ssm_session_command` output, then
+    `sudo tail -f /var/log/nextjs-bootstrap.log`,
+    `sudo journalctl -u nextjs -f` (web) or
+    `sudo journalctl -u nextjs-backend -f` (API).
+
+labels:
+  - test-suite: nextjs-rds
+  - app: chessu
+  - managed-by: torque
+
+inputs:
+
+  agent:
+    type: agent
+    default: demo-prod
+    description: Torque Kubernetes agent that will execute the Terraform grain.
+
+  aws_region:
+    type: string
+    default: us-east-1
+    description: AWS region for the VPC, EC2 instance and RDS database.
+    allowed-values:
+      - us-east-1
+      - us-east-2
+      - us-west-2
+      - eu-west-1
+
+  instance_type:
+    type: string
+    default: t3.small
+    description: |
+      EC2 size. t3.small (2 GiB) builds the client and API comfortably;
+      t3.micro works with the swap file but builds slowly.
+    allowed-values:
+      - t3.micro
+      - t3.small
+      - t3.medium
+
+  db_instance_class:
+    type: string
+    default: db.t4g.micro
+    description: RDS PostgreSQL instance class.
+    allowed-values:
+      - db.t4g.micro
+      - db.t3.micro
+
+  allowed_cidr:
+    type: string
+    default: 0.0.0.0/0
+    description: |
+      CIDR allowed to reach the app (port 80) and API (port 3001). Must
+      include the Torque agent's egress IP (health check) and the
+      instance's own public IP, because chessu's server-rendered pages
+      call the API through its public URL. Leave at 0.0.0.0/0 unless you
+      know both.
+
+grains:
+
+  chessu:
+    kind: terraform
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: terraform/aws-nextjs-rds
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      # AWS credentials come from the agent's default service account (IRSA).
+
+      inputs:
+        - name_prefix: 'chessu-{{ envId | downcase }}'
+        - region: '{{ .inputs.aws_region }}'
+        - instance_type: '{{ .inputs.instance_type }}'
+        - db_instance_class: '{{ .inputs.db_instance_class }}'
+        - allowed_cidr: '{{ .inputs.allowed_cidr }}'
+        - additional_tags: '{ "torque_env_id": "{{ envId | downcase }}", "owner": "{{ ownerEmail }}", "app": "chessu" }'
+
+        # chessu source. The repo has no release tags; main was last
+        # updated October 2024 (29968f0).
+        - app_repo_url: https://github.com/dotnize/chessu.git
+        - app_git_ref: main
+
+        - app_install_command: 'corepack use pnpm@9.15.9 && pnpm install --frozen-lockfile && pnpm --filter @chessu/client update next@14'
+        - app_build_command: 'pnpm build:server && pnpm build:client'
+        - app_start_command: 'pnpm start:client'
+        - app_backend_start_command: 'PORT=3001 pnpm start:server'
+        - app_extra_ports: '[3001]'
+        # Bare $NAME references are expanded on the instance; see the
+        # module's app_extra_env description.
+        - app_extra_env: '{ "NEXT_PUBLIC_API_URL": "$APP_URL:3001", "CORS_ORIGIN": "$APP_URL", "SESSION_SECRET": "$APP_SECRET" }'
+
+        # Web on :80 must answer /, and the API must answer /v1/games. The
+        # API only starts listening after it has connected to RDS, so a 200
+        # here proves the database path too.
+        - health_check_path: /
+        - extra_health_checks: '[{ "port": 3001, "path": "/v1/games" }]'
+
+      outputs:
+        - app_url
+        - instance_id
+        - instance_public_ip
+        - ssm_session_command
+        - rds_endpoint
+        - database_url_parameter
+
+outputs:
+
+  app_url:
+    value: '{{ .grains.chessu.outputs.app_url }}'
+    kind: link
+
+  api_url:
+    value: '{{ .grains.chessu.outputs.app_url }}:3001/v1/games'
+    kind: link
+
+  instance_id:
+    value: '{{ .grains.chessu.outputs.instance_id }}'
+
+  ssm_session_command:
+    value: '{{ .grains.chessu.outputs.ssm_session_command }}'
+
+  rds_endpoint:
+    value: '{{ .grains.chessu.outputs.rds_endpoint }}'
+
+  database_url_parameter:
+    value: '{{ .grains.chessu.outputs.database_url_parameter }}'

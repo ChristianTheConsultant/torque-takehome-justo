@@ -83,6 +83,17 @@ resource "aws_vpc_security_group_ingress_rule" "web_app" {
   to_port           = var.app_port
 }
 
+resource "aws_vpc_security_group_ingress_rule" "web_extra" {
+  for_each = toset([for p in var.app_extra_ports : tostring(p)])
+
+  security_group_id = aws_security_group.web.id
+  description       = "App extra port ${each.value}"
+  cidr_ipv4         = var.allowed_cidr
+  ip_protocol       = "tcp"
+  from_port         = tonumber(each.value)
+  to_port           = tonumber(each.value)
+}
+
 # Outbound is needed at boot for dnf, nodejs.org, the npm registry, git and
 # the SSM API.
 resource "aws_vpc_security_group_egress_rule" "web_all" {

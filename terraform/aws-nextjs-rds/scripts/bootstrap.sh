@@ -6,9 +6,10 @@
 #   3. app source: built-in demo app, or a git clone
 #   4. wait for the DATABASE_URL parameter (RDS is created in parallel)
 #   5. install, build, optional migrate
-#   6. systemd unit 'nextjs' on APP_PORT
+#   6. systemd unit 'nextjs' on APP_PORT (+ optional 'nextjs-backend')
 #
-# Log: /var/log/nextjs-bootstrap.log   Runtime: journalctl -u nextjs
+# Log: /var/log/nextjs-bootstrap.log
+# Runtime: journalctl -u nextjs   (and -u nextjs-backend if configured)
 set -euo pipefail
 exec > >(tee -a /var/log/nextjs-bootstrap.log) 2>&1
 
@@ -27,6 +28,7 @@ APP_INSTALL_CMD=$(cfg APP_INSTALL_CMD)
 APP_BUILD_CMD=$(cfg APP_BUILD_CMD)
 APP_MIGRATE_CMD=$(cfg APP_MIGRATE_CMD)
 APP_START_CMD=$(cfg APP_START_CMD)
+APP_BACKEND_CMD=$(cfg APP_BACKEND_CMD)
 APP_PORT=$(cfg APP_PORT)
 APP_EXTRA_ENV=$(cfg APP_EXTRA_ENV)
 
@@ -94,14 +96,29 @@ imds_token=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-
 PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: ${imds_token}" http://169.254.169.254/latest/meta-data/public-ipv4)
 if [ "$APP_PORT" = "80" ]; then APP_URL="http://${PUBLIC_IP}"; else APP_URL="http://${PUBLIC_IP}:${APP_PORT}"; fi
 
-# Read by systemd (EnvironmentFile) and sourced by the build step. NODE_ENV
-# is deliberately absent here: 'npm install' with NODE_ENV=production skips
-# the devDependencies most Next.js builds need. The systemd unit sets it.
+# Apps that call 'new pg.Pool()' with no config read the libpq-style PG*
+# variables instead of DATABASE_URL, so export both forms.
+pg_env=$(node -e '
+  const u = new URL(process.argv[1]);
+  console.log(`PGHOST=${u.hostname}\nPGPORT=${u.port || 5432}\nPGUSER=${decodeURIComponent(u.username)}`);
+  console.log(`PGPASSWORD=${decodeURIComponent(u.password)}\nPGDATABASE=${u.pathname.slice(1)}\nPGSSLMODE=require`);
+' "$DATABASE_URL")
+
+# Per-instance random secret apps can use for session signing etc.
+APP_SECRET=$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')
+
+# Sourced by every step script (install/build/start), so later lines can
+# reference earlier ones with bare $NAME (e.g. CORS_ORIGIN=$APP_URL in
+# app_extra_env). NODE_ENV is deliberately absent: 'npm install' with
+# NODE_ENV=production skips the devDependencies most builds need; the
+# 'nextjs' unit sets it.
 {
   echo "PORT=${APP_PORT}"
   echo "HOSTNAME=0.0.0.0"
   echo "APP_URL=${APP_URL}"
+  echo "APP_SECRET=${APP_SECRET}"
   echo "DATABASE_URL=${DATABASE_URL}"
+  printf '%s\n' "$pg_env"
   echo "NODE_EXTRA_CA_CERTS=/etc/nextjs/rds-ca.pem"
   echo "NEXT_TELEMETRY_DISABLED=1"
   echo "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
@@ -132,7 +149,10 @@ write_step() {
 }
 write_step install "$APP_INSTALL_CMD"
 write_step build "$APP_BUILD_CMD"
-write_step start "exec $APP_START_CMD"
+# No 'exec': commands like 'PORT=3001 pnpm start' must stay valid. systemd
+# stops the whole cgroup, so the extra bash parent is harmless.
+write_step start "$APP_START_CMD"
+if [ -n "$APP_BACKEND_CMD" ]; then write_step backend "$APP_BACKEND_CMD"; fi
 if [ -n "$APP_MIGRATE_CMD" ]; then write_step migrate "$APP_MIGRATE_CMD"; fi
 
 # runuser keeps root's HOME, which would point npm/corepack caches at /root.
@@ -168,6 +188,30 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
 
+# The backend unit deliberately sets no NODE_ENV; put it in the command if
+# the backend wants it (some, like chessu, only send cookies over HTTPS in
+# production mode).
+if [ -n "$APP_BACKEND_CMD" ]; then
+  cat > /etc/systemd/system/nextjs-backend.service <<EOF
+[Unit]
+Description=Next.js app backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${APP_USER}
+WorkingDirectory=${APP_DIR}
+ExecStart=/etc/nextjs/backend.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
 systemctl daemon-reload
+if [ -n "$APP_BACKEND_CMD" ]; then systemctl enable --now nextjs-backend; fi
 systemctl enable --now nextjs
 log "Done. App starting on ${APP_URL}"

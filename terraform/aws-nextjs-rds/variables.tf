@@ -61,9 +61,9 @@ variable "root_volume_size_gb" {
 }
 
 variable "node_version" {
-  description = "Node.js version downloaded from nodejs.org at boot."
+  description = "Node.js version downloaded from nodejs.org at boot. Must bundle corepack >= 0.31 (Node 22.14+) so pnpm/yarn downloads pass signature checks."
   type        = string
-  default     = "22.11.0"
+  default     = "22.14.0"
 }
 
 # ---------------------------------------------------------------------------
@@ -151,6 +151,18 @@ variable "app_start_command" {
   default     = ""
 }
 
+variable "app_backend_start_command" {
+  description = "Optional second long-running process (e.g. a separate Express/socket.io API), run as the 'nextjs-backend' systemd unit from the app directory. Gets the same environment as the app; set its own PORT inline, e.g. 'PORT=3001 pnpm start:server'."
+  type        = string
+  default     = ""
+}
+
+variable "app_extra_ports" {
+  description = "Additional TCP ports opened to allowed_cidr, e.g. [3001] for a backend the browser talks to directly."
+  type        = list(number)
+  default     = []
+}
+
 variable "app_port" {
   description = "Port the app listens on and the security group opens. 80 is bound via CAP_NET_BIND_SERVICE, so no reverse proxy is needed."
   type        = number
@@ -158,7 +170,7 @@ variable "app_port" {
 }
 
 variable "app_extra_env" {
-  description = "Extra environment variables for the app (build and runtime), e.g. auth secrets a chosen open-source project needs. From Torque pass JSON: '{\"KEY\":\"value\"}'."
+  description = "Extra environment variables for the app and backend (build and runtime). Values may reference $APP_URL (http://<public-ip>), $APP_SECRET (random per instance) and the PG* variables using bare $NAME syntax (not $${NAME}, which Terraform would try to interpolate). From Torque pass JSON: '{\"KEY\":\"value\"}'."
   type        = map(string)
   default     = {}
   sensitive   = true
@@ -178,6 +190,15 @@ variable "health_check_path" {
   description = "Path polled by the health check. Empty uses /api/health for the demo app (which also round-trips to RDS) and / for a custom repo."
   type        = string
   default     = ""
+}
+
+variable "extra_health_checks" {
+  description = "Additional endpoints that must answer 2xx/3xx before the apply finishes, e.g. a backend API: [{ port = 3001, path = \"/v1/games\" }]. Only used when wait_for_app is true."
+  type = list(object({
+    port = number
+    path = string
+  }))
+  default = []
 }
 
 variable "health_check_timeout_minutes" {

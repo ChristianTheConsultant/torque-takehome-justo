@@ -72,6 +72,7 @@ locals {
     APP_BUILD_CMD   = var.app_build_command
     APP_MIGRATE_CMD = var.app_migrate_command
     APP_START_CMD   = var.app_start_command
+    APP_BACKEND_CMD = var.app_backend_start_command
     APP_PORT        = tostring(var.app_port)
     APP_EXTRA_ENV   = join("\n", [for k, v in var.app_extra_env : "${k}=${v}"])
   }
@@ -173,6 +174,28 @@ data "http" "app_health" {
     postcondition {
       condition     = self.status_code >= 200 && self.status_code < 400
       error_message = "App at ${self.url} returned HTTP ${self.status_code}. Check /var/log/nextjs-bootstrap.log and 'journalctl -u nextjs' on the instance."
+    }
+  }
+
+  depends_on = [aws_instance.app, aws_db_instance.this]
+}
+
+data "http" "extra_health" {
+  for_each = var.wait_for_app ? { for c in var.extra_health_checks : "${c.port}${c.path}" => c } : {}
+
+  url                = "http://${aws_instance.app.public_ip}:${each.value.port}${each.value.path}"
+  request_timeout_ms = 5000
+
+  retry {
+    attempts     = var.health_check_timeout_minutes * 4
+    min_delay_ms = 15000
+    max_delay_ms = 15000
+  }
+
+  lifecycle {
+    postcondition {
+      condition     = self.status_code >= 200 && self.status_code < 400
+      error_message = "Endpoint ${self.url} returned HTTP ${self.status_code}. Check 'journalctl -u nextjs-backend' on the instance."
     }
   }
 
