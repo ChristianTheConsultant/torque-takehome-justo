@@ -1,0 +1,28 @@
+{
+  "mock": {
+    "blueprint": {
+      "name": "repo-migration-test",
+      "repository": "torque-takehome-justo",
+      "labels": [],
+      "grains": [{ "kind": "terraform", "name": "gcs_bucket" }]
+    },
+    "inputs": [
+      { "name": "gcp_region", "type": "string", "value_v2": { "value": "us-central1" }, "sensitive": false, "description": null }
+    ],
+    "timezone": "America/Chicago",
+    "duration_minutes": 120,
+    "extend_duration_minutes": null,
+    "blueprint_avg_hourly_cost": null,
+    "space_name": "PAN-repo-swap-test",
+    "user_email": "user@example.com",
+    "groups": [],
+    "roles": { "account_roles": [], "space_roles": [] },
+    "is_git_environment": false,
+    "entity_name": "repo-migration-test-mock",
+    "action_identifier": { "entity_type": "Environment", "entity_id": null, "action_type": "Launch" },
+    "owner_active_environments_in_space": 1,
+    "owner_active_environments_in_account": 1,
+    "active_environments_in_space": 2,
+    "active_environments_in_account": 5
+  }
+}
