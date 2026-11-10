@@ -1,0 +1,144 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Multi-grain chaining demo
+#
+# Three shell grains run in sequence, and each one's output is the next one's
+# input:
+#
+#   create_message ──message──> transform_message ──upper_message──> summarize
+#
+# Everything is inline, so there is no repo asset and no cloud resource.
+# The grains run as pods on the agent, which makes the blueprint free to
+# launch and quick to finish.
+#
+# How a shell grain produces an output: the command must `export` a variable
+# whose name is listed under that command's `outputs:`. Plain `echo` is not
+# captured (the echoes below are only there so the values show in the grain
+# logs), and an empty export is dropped.
+#
+# How the next grain consumes it: a `depends-on` on the upstream grain, plus
+# a Liquid reference to
+#   .grains.<grain>.activities.deploy.commands.<command>.outputs.<output>
+# Each value comes in through env-vars rather than being templated straight
+# into the command, so user input is never parsed as shell.
+# ---------------------------------------------------------------------------
+
+description: |
+  Multi-grain chaining demo. Three shell grains run in sequence, each taking
+  the previous grain's output as its input: build a greeting, upper-case it,
+  then summarize it. No cloud resources are created.
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: Torque Kubernetes agent that runs the shell grains.
+
+  name:
+    type: string
+    default: Torque
+    description: Name used in the greeting built by the first grain.
+
+grains:
+
+  # Grain 1: takes a blueprint input, produces `message` and `created_at`.
+  create_message:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      env-vars:
+        - NAME: '{{ .inputs.name }}'
+
+      activities:
+        deploy:
+          commands:
+            - name: build
+              command: |
+                export message="Hello ${NAME}"
+                export created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo "message=${message}"
+                echo "created_at=${created_at}"
+              outputs:
+                - message
+                - created_at
+        destroy:
+          commands:
+            - echo "Destroying create_message (runs last on teardown)"
+
+  # Grain 2: consumes grain 1's `message`, produces `upper_message` and
+  # `message_length`.
+  transform_message:
+    kind: shell
+    depends-on: create_message
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      env-vars:
+        - MESSAGE: '{{ .grains.create_message.activities.deploy.commands.build.outputs.message }}'
+
+      activities:
+        deploy:
+          commands:
+            - name: transform
+              command: |
+                export upper_message="$(printf '%s' "${MESSAGE}" | tr '[:lower:]' '[:upper:]')"
+                export message_length="${#MESSAGE}"
+                echo "received MESSAGE=${MESSAGE}"
+                echo "upper_message=${upper_message}"
+                echo "message_length=${message_length}"
+              outputs:
+                - upper_message
+                - message_length
+        destroy:
+          commands:
+            - echo "Destroying transform_message"
+
+  # Grain 3: consumes grain 2's outputs, produces the final `summary`.
+  summarize:
+    kind: shell
+    depends-on: transform_message
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      env-vars:
+        - UPPER_MESSAGE: '{{ .grains.transform_message.activities.deploy.commands.transform.outputs.upper_message }}'
+        - MESSAGE_LENGTH: '{{ .grains.transform_message.activities.deploy.commands.transform.outputs.message_length }}'
+
+      activities:
+        deploy:
+          commands:
+            - name: summarize
+              command: |
+                export summary="${UPPER_MESSAGE} (${MESSAGE_LENGTH} characters)"
+                echo "received UPPER_MESSAGE=${UPPER_MESSAGE}"
+                echo "received MESSAGE_LENGTH=${MESSAGE_LENGTH}"
+                echo "summary=${summary}"
+              outputs:
+                - summary
+        destroy:
+          commands:
+            - echo "Destroying summarize (runs first on teardown)"
+
+# One output per stage, so the environment page shows the value at each hop.
+outputs:
+
+  step_1_message:
+    value: '{{ .grains.create_message.activities.deploy.commands.build.outputs.message }}'
+
+  step_1_created_at:
+    value: '{{ .grains.create_message.activities.deploy.commands.build.outputs.created_at }}'
+
+  step_2_upper_message:
+    value: '{{ .grains.transform_message.activities.deploy.commands.transform.outputs.upper_message }}'
+
+  step_2_message_length:
+    value: '{{ .grains.transform_message.activities.deploy.commands.transform.outputs.message_length }}'
+
+  step_3_summary:
+    value: '{{ .grains.summarize.activities.deploy.commands.summarize.outputs.summary }}'

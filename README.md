@@ -24,7 +24,8 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
 │   ├── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
 │   ├── aws-nextjs-rds.yaml                   Next.js on EC2 + RDS test blueprint (docs/aws-nextjs-rds.md)
-│   └── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
+│   ├── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
+│   └── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
 ├── policies/
 │   ├── max_duration.rego                     Torque environment policy: cap environment lifetime
 │   ├── max_duration_test.rego                OPA unit tests (opa test policies/ -v)
