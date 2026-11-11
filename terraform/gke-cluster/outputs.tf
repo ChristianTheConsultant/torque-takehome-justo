@@ -16,8 +16,3 @@ output "secret-namespace" {
   description = "Namespace of that Secret in the agent's cluster."
   value       = kubernetes_secret_v1.kubeconfig.metadata[0].namespace
 }
-
-output "app_namespace" {
-  description = "Namespace created in the new cluster for the application."
-  value       = kubernetes_namespace_v1.app.metadata[0].name
-}

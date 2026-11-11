@@ -86,6 +86,13 @@ inputs:
       - e2-standard-2
       - e2-standard-4
 
+  app_namespace:
+    type: string
+    default: online-boutique
+    description: |
+      Namespace in the new cluster for Online Boutique. The gke-cluster
+      grain creates it before portal deploys into it.
+
 outputs:
 
   Application Access:
@@ -116,12 +123,12 @@ grains:
         - node_count: '{{ .inputs.node_count }}'
         - machine_type: '{{ .inputs.machine_type }}'
         - kubeconfig_secret_namespace: '{{ .inputs.agent_namespace }}'
+        - app_namespace: '{{ .inputs.app_namespace }}'
 
       outputs:
         - kubernetes_cluster_name
         - secret-name
         - secret-namespace
-        - app_namespace
 
   portal:
     kind: kubernetes
@@ -131,8 +138,10 @@ grains:
         store: torque-takehome-justo
         path: kubernetes/online-boutique/kubernetes-manifests.yaml
 
-      # Created in the new cluster by the gke-cluster grain.
-      target-namespace: '{{ .grains.gke-cluster.outputs.app_namespace }}'
+      # Created in the new cluster by the gke-cluster grain. Taken from the
+      # input rather than that grain's output: Torque can't resolve grain
+      # outputs in target-namespace.
+      target-namespace: '{{ .inputs.app_namespace }}'
 
       # The agent runs this grain against the new cluster using the
       # kubeconfig Secret the Terraform grain wrote into the agent's cluster.
@@ -149,6 +158,6 @@ grains:
           source:
             store: torque-takehome-justo
             path: scripts/get-external-frontend.sh
-          arguments: '{{ .grains.gke-cluster.outputs.app_namespace }}'
+          arguments: '{{ .inputs.app_namespace }}'
           outputs:
             - frontend
