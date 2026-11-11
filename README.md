@@ -19,13 +19,19 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   │   ├── variables.tf                      inputs with type + validation
 │   │   ├── outputs.tf                        outputs exposed back to Torque
 │   │   └── versions.tf                       provider and Terraform pinning
-│   └── aws-nextjs-rds/                       AWS test module: VPC + EC2 Next.js + RDS Postgres
+│   ├── aws-nextjs-rds/                       AWS test module: VPC + EC2 Next.js + RDS Postgres
+│   └── gke-cluster/                          VPC + zonal GKE cluster + kubeconfig Secret for the agent
+├── kubernetes/
+│   └── online-boutique/                      Online Boutique v0.10.7 manifests (vendored, unmodified)
+├── scripts/
+│   └── get-external-frontend.sh              post-install hook: exports the Online Boutique load balancer IP
 ├── blueprints/
 │   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
 │   ├── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
 │   ├── aws-nextjs-rds.yaml                   Next.js on EC2 + RDS test blueprint (docs/aws-nextjs-rds.md)
 │   ├── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
-│   └── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
+│   ├── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
+│   └── k8s-as-a-service.yaml                 docs "Kubernetes as a Service" example: GKE cluster + Online Boutique
 ├── policies/
 │   ├── max_duration.rego                     Torque environment policy: cap environment lifetime
 │   ├── max_duration_test.rego                OPA unit tests (opa test policies/ -v)

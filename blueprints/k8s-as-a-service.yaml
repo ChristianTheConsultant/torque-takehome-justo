@@ -1,0 +1,154 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Kubernetes as a Service: an ephemeral GKE cluster with an e-commerce app
+#
+# Recreates https://docs.qtorque.io/example-blueprints/k8s-as-a-service.
+# The page shows only part of its blueprint; grain names, the
+# agent.kubernetes.permissions wiring, the post-install script and the
+# "Application Access" output match it, and the parts it leaves out come
+# from this repo:
+#
+#   gke-cluster (terraform/gke-cluster)
+#     VPC + zonal GKE cluster, and a kubeconfig for it written as a Secret
+#     into the agent's own cluster
+#       │  kubernetes_cluster_name, secret-name, secret-namespace
+#       ▼
+#   portal (kubernetes/online-boutique)
+#     Online Boutique, applied to the new cluster through that kubeconfig,
+#     so the new cluster needs no Torque agent. The post-install script
+#     (scripts/get-external-frontend.sh) exports the GCP load balancer IP.
+#
+# Launch takes about 12-15 minutes, mostly GKE cluster and node pool
+# creation. Approximate cost while running: ~$0.25-0.30/hour (GKE cluster
+# fee, 2 x e2-standard-2, one load balancer).
+#
+# Teardown runs portal first, which deletes the LoadBalancer Service and
+# with it the GCP forwarding rule and firewall rules. If portal fails to
+# tear down, those rules keep the VPC in use and gke-cluster's destroy fails
+# on the network.
+# ---------------------------------------------------------------------------
+
+description: e-commerce application deployed on a GKE cluster
+
+metadata:
+  display-name: GKE Cluster
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: |
+      Torque Kubernetes agent that runs both grains. Its runner service
+      account needs GCP rights to create networks and GKE clusters, and
+      Kubernetes rights to create Secrets in agent_namespace.
+
+  agent_namespace:
+    type: string
+    default: torque-sandboxes
+    description: |
+      Namespace in the agent's cluster where the kubeconfig Secret for the
+      new cluster is stored. Use the agent's own namespace.
+
+  gcp_project_id:
+    type: string
+    default: torque-demo-production
+    description: GCP project the cluster is created in.
+
+  gcp_zone:
+    type: string
+    default: us-central1-a
+    description: Zone for the zonal GKE cluster.
+    allowed-values:
+      - us-central1-a
+      - us-central1-b
+      - us-east1-b
+      - us-west1-a
+      - europe-west1-b
+
+  node_count:
+    type: string
+    default: '2'
+    description: Number of nodes in the cluster.
+    allowed-values:
+      - '2'
+      - '3'
+      - '4'
+
+  machine_type:
+    type: string
+    default: e2-standard-2
+    description: |
+      Node machine type. Online Boutique requests about 1.7 vCPU in total,
+      so 2 x e2-standard-2 is the smallest comfortable size.
+    allowed-values:
+      - e2-standard-2
+      - e2-standard-4
+
+outputs:
+
+  Application Access:
+    value: 'http://{{ .grains.portal.scripts.post-kubernetes-install.outputs.frontend }}'
+    kind: link
+
+grains:
+
+  gke-cluster:
+    kind: terraform
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: terraform/gke-cluster
+
+      agent:
+        name: '{{ .inputs.agent }}'
+
+      # GCP credentials come from the agent's service account through GKE
+      # Workload Identity; see simple-environment.yaml.
+      env-vars:
+        - GOOGLE_PROJECT: '{{ .inputs.gcp_project_id }}'
+
+      inputs:
+        - project_id: '{{ .inputs.gcp_project_id }}'
+        - zone: '{{ .inputs.gcp_zone }}'
+        - cluster_name: 'gke-{{ envId | downcase }}'
+        - node_count: '{{ .inputs.node_count }}'
+        - machine_type: '{{ .inputs.machine_type }}'
+        - kubeconfig_secret_namespace: '{{ .inputs.agent_namespace }}'
+
+      outputs:
+        - kubernetes_cluster_name
+        - secret-name
+        - secret-namespace
+        - app_namespace
+
+  portal:
+    kind: kubernetes
+    depends-on: gke-cluster
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: kubernetes/online-boutique/kubernetes-manifests.yaml
+
+      # Created in the new cluster by the gke-cluster grain.
+      target-namespace: '{{ .grains.gke-cluster.outputs.app_namespace }}'
+
+      # The agent runs this grain against the new cluster using the
+      # kubeconfig Secret the Terraform grain wrote into the agent's cluster.
+      agent:
+        name: '{{ .inputs.agent }}'
+        kubernetes:
+          permissions:
+            destination-context-name: '{{ .grains.gke-cluster.outputs.kubernetes_cluster_name }}'
+            secret-name: '{{ .grains.gke-cluster.outputs.secret-name }}'
+            secret-namespace: '{{ .grains.gke-cluster.outputs.secret-namespace }}'
+
+      scripts:
+        post-kubernetes-install:
+          source:
+            store: torque-takehome-justo
+            path: scripts/get-external-frontend.sh
+          arguments: '{{ .grains.gke-cluster.outputs.app_namespace }}'
+          outputs:
+            - frontend

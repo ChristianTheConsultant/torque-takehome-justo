@@ -21,6 +21,7 @@ jobs:
         module:
           - terraform/gcs-bucket-sample
           - terraform/aws-nextjs-rds
+          - terraform/gke-cluster
     defaults:
       run:
         working-directory: ${{ matrix.module }}
