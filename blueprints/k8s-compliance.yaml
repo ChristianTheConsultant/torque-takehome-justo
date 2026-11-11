@@ -1,0 +1,158 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Kubernetes Compliance: Online Boutique gated by Datree and Kubescape
+#
+# Recreates https://docs.qtorque.io/example-blueprints/k8s-compliance.
+# Grain names, their order and the two Quick Access links match the docs
+# screenshot:
+#
+#   validate-datree ────┐
+#                       ├──> portal ──> health-check
+#   validate-kubescape ─┘
+#
+#   validate-datree     Datree policy check (policies/datree-online-boutique.yaml)
+#   validate-kubescape  Kubescape NSA framework scan, fails below the
+#                       compliance threshold input
+#   portal              Online Boutique (kubernetes/online-boutique), deployed
+#                       only if both checks pass
+#   health-check        waits for the load balancer to serve the shop, then
+#                       checks pages that hit the backend services
+#
+# All grains read the same manifest file from this repo, so what is
+# validated is exactly what portal deploys.
+#
+# Differences from the docs: Datree has shut down (get.datree.io no longer
+# resolves), so the last CLI release runs in offline mode with a policy file
+# from this repo instead of a Datree account token. The app deploys to the
+# agent's own cluster (gke-prod); the docs ran on EKS, hence their ELB
+# hostname link.
+#
+# Prerequisites on the agent's cluster: the namespace must exist, and the
+# agent's runner service account needs admin in it. Torque cannot run two
+# environments of this blueprint in the same namespace at once.
+#
+# Launch takes about 3-5 minutes. Running cost is one load balancer plus
+# the app's pods on the existing cluster.
+# ---------------------------------------------------------------------------
+
+description: |
+  Online Boutique e-commerce app on Kubernetes, deployed only after its
+  manifests pass Datree and Kubescape compliance checks. A health check
+  then confirms the shop is reachable and working.
+
+metadata:
+  display-name: Online Boutique Compliance
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: |
+      Torque Kubernetes agent. Runs the checks and deploys Online Boutique
+      into the cluster the agent runs on.
+
+  namespace:
+    type: string
+    default: online-boutique
+    description: |
+      Namespace for Online Boutique on the agent's cluster. It must already
+      exist, and the agent's runner service account needs admin in it.
+
+  kubescape_threshold:
+    type: string
+    default: '70'
+    description: |
+      Minimum Kubescape compliance score (%) against the NSA framework.
+      Below it, validate-kubescape fails and the app is not deployed.
+    allowed-values:
+      - '50'
+      - '60'
+      - '70'
+      - '80'
+      - '90'
+
+outputs:
+
+  Architecture Diagram:
+    value: https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/v0.10.7/docs/img/architecture-diagram.png
+    kind: link
+
+  Portal Link:
+    value: 'http://{{ .grains.portal.scripts.post-kubernetes-install.outputs.frontend }}'
+    kind: link
+
+grains:
+
+  # Shell grains: only the last command's exit code decides the grain's
+  # result, so each check is a single command.
+
+  validate-datree:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      files:
+        - source: torque-takehome-justo
+          path: kubernetes/online-boutique/kubernetes-manifests.yaml
+        - source: torque-takehome-justo
+          path: policies/datree-online-boutique.yaml
+        - source: torque-takehome-justo
+          path: scripts/validate-datree.sh
+      activities:
+        deploy:
+          commands:
+            - bash validate-datree.sh kubernetes-manifests.yaml datree-online-boutique.yaml
+
+  validate-kubescape:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      env-vars:
+        - COMPLIANCE_THRESHOLD: '{{ .inputs.kubescape_threshold }}'
+      files:
+        - source: torque-takehome-justo
+          path: kubernetes/online-boutique/kubernetes-manifests.yaml
+        - source: torque-takehome-justo
+          path: scripts/validate-kubescape.sh
+      activities:
+        deploy:
+          commands:
+            - bash validate-kubescape.sh kubernetes-manifests.yaml nsa "$COMPLIANCE_THRESHOLD"
+
+  portal:
+    kind: kubernetes
+    depends-on: validate-datree, validate-kubescape
+    spec:
+      source:
+        store: torque-takehome-justo
+        path: kubernetes/online-boutique/kubernetes-manifests.yaml
+      target-namespace: '{{ .inputs.namespace }}'
+      agent:
+        name: '{{ .inputs.agent }}'
+      scripts:
+        post-kubernetes-install:
+          source:
+            store: torque-takehome-justo
+            path: scripts/get-external-frontend.sh
+          arguments: '{{ .inputs.namespace }}'
+          outputs:
+            - frontend
+
+  health-check:
+    kind: shell
+    depends-on: portal
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      env-vars:
+        - FRONTEND: '{{ .grains.portal.scripts.post-kubernetes-install.outputs.frontend }}'
+      files:
+        - source: torque-takehome-justo
+          path: scripts/health-check.sh
+      activities:
+        deploy:
+          commands:
+            - bash health-check.sh "http://$FRONTEND"

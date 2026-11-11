@@ -24,18 +24,23 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 ├── kubernetes/
 │   └── online-boutique/                      Online Boutique v0.10.7 manifests (vendored, unmodified)
 ├── scripts/
-│   └── get-external-frontend.sh              post-install hook: exports the Online Boutique load balancer IP
+│   ├── get-external-frontend.sh              post-install hook: exports the Online Boutique load balancer IP
+│   ├── validate-datree.sh                    Datree policy check (offline CLI) for k8s-compliance
+│   ├── validate-kubescape.sh                 Kubescape framework scan with a compliance threshold
+│   └── health-check.sh                       waits for Online Boutique to serve, then checks backend-backed pages
 ├── blueprints/
 │   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
 │   ├── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
 │   ├── aws-nextjs-rds.yaml                   Next.js on EC2 + RDS test blueprint (docs/aws-nextjs-rds.md)
 │   ├── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
 │   ├── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
-│   └── k8s-as-a-service.yaml                 docs "Kubernetes as a Service" example: GKE cluster + Online Boutique
+│   ├── k8s-as-a-service.yaml                 docs "Kubernetes as a Service" example: GKE cluster + Online Boutique
+│   └── k8s-compliance.yaml                   docs "Kubernetes Compliance" example: Datree + Kubescape gates, then Online Boutique
 ├── policies/
 │   ├── max_duration.rego                     Torque environment policy: cap environment lifetime
 │   ├── max_duration_test.rego                OPA unit tests (opa test policies/ -v)
-│   └── max_duration_mock.json                sample policy input used by the tests
+│   ├── max_duration_mock.json                sample policy input used by the tests
+│   └── datree-online-boutique.yaml           Datree policy-as-code used by k8s-compliance (not a Torque policy)
 ├── graphics/
 │   └── repo-migration-test.svg               custom catalog icon used by that blueprint
 ├── helm/                                     bonus grain: Helm chart for K8s
