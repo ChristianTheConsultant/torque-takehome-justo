@@ -1,0 +1,46 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Test helper: an environment that fails to terminate
+#
+# Deploys nothing. Ending it fails with a Terraform-style timeout error
+# (by default every time), which leaves the environment in Terminate Failed.
+# Use it to test Retry End Environment, and the monitoring space's onboarder
+# and labeler, without touching real infrastructure.
+#
+# Lower teardown_failure_rate to let a later End succeed: at 50, about half
+# of the attempts succeed; at 0, every attempt does.
+# ---------------------------------------------------------------------------
+
+description: |
+  TEST ONLY. Deploys nothing. Ending it fails (by default always), which
+  leaves the environment in Terminate Failed.
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: Torque Kubernetes agent that runs the shell grain.
+
+  teardown_failure_rate:
+    type: string
+    default: '100'
+    description: Percent chance that ending the environment fails (100 = always, 50 = about half the time, 0 = never).
+
+grains:
+
+  fail-to-terminate:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      env-vars:
+        - FAILURE_RATE: '{{ .inputs.teardown_failure_rate }}'
+      activities:
+        deploy:
+          commands:
+            - 'echo "Test environment is up. Ending it fails ${FAILURE_RATE}% of the time."'
+        destroy:
+          commands:
+            - 'if [ "$((RANDOM % 100))" -lt "$FAILURE_RATE" ]; then echo "Error: timeout while waiting for state to become DONE (simulated teardown failure)"; exit 1; fi; echo "Teardown succeeded"'

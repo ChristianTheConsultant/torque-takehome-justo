@@ -1,0 +1,66 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# Retry ending an environment that failed to terminate
+#
+# Environment-scoped workflow: run it on an environment in Terminate Failed
+# and it asks Torque to end that environment again, through the Torque API
+# (scripts/retry-end-environment.sh). It uses the normal End, never Force End,
+# and leaves an environment in any other status alone.
+#
+# Prerequisite: a sensitive Parameter Store entry named torque_token holding
+# a Torque API token that may end environments in the space. The workflow
+# acts as that token's user, not as the person who runs it.
+#
+# The workflow only asks Torque to end the environment; it finishes before
+# the teardown does. If the teardown fails again, the environment goes back
+# to Terminate Failed.
+#
+# Manual trigger only, on purpose: an "Environment Ending Failed" event
+# trigger would re-run it after every failed retry, without end.
+# ---------------------------------------------------------------------------
+
+description: |
+  Ends this environment again if it is stuck in Terminate Failed (normal End,
+  never Force End). Does nothing in any other status.
+
+metadata:
+  display-name: Retry End Environment
+
+workflow:
+  scope: env
+  triggers:
+    - type: manual
+  timeout: 10
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: Torque Kubernetes agent that runs the shell grain.
+
+  torque_host:
+    type: string
+    default: portal.qtorque.io
+    description: Hostname of the Torque account the API calls go to.
+
+grains:
+
+  retry-end:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      env-vars:
+        - TORQUE_TOKEN: '{{ .params.torque_token }}'
+        - SPACE: '{{ spaceName }}'
+        - ENV_ID: '{{ .bindings.environment_id }}'
+        - TORQUE_HOST: '{{ .inputs.torque_host }}'
+      files:
+        - source: torque-takehome-justo
+          path: scripts/retry-end-environment.sh
+      activities:
+        deploy:
+          commands:
+            - bash retry-end-environment.sh "$SPACE" "$ENV_ID" "$TORQUE_HOST"
