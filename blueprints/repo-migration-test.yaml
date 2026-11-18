@@ -78,6 +78,7 @@ inputs:
 
   gcp_project_id:
     type: string
+    default: torque-demo-production
     description: GCP project ID where the bucket will be created.
 
   gcp_region:
