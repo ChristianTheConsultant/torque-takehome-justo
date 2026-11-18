@@ -27,7 +27,8 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   ├── get-external-frontend.sh              post-install hook: exports the Online Boutique load balancer IP
 │   ├── validate-datree.sh                    Datree policy check (offline CLI) for k8s-compliance
 │   ├── validate-kubescape.sh                 Kubescape framework scan with a compliance threshold
-│   └── health-check.sh                       waits for Online Boutique to serve, then checks backend-backed pages
+│   ├── health-check.sh                       waits for Online Boutique to serve, then checks backend-backed pages
+│   └── end-all-environments.sh               ends every running environment in a space via the Torque API
 ├── blueprints/
 │   ├── simple-environment.yaml               Torque blueprint (spec_version 2)
 │   ├── repo-migration-test.yaml              metadata-heavy blueprint for repo-swap testing
@@ -35,7 +36,8 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   ├── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
 │   ├── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
 │   ├── k8s-as-a-service.yaml                 docs "Kubernetes as a Service" example: GKE cluster + Online Boutique
-│   └── k8s-compliance.yaml                   docs "Kubernetes Compliance" example: Datree + Kubescape gates, then Online Boutique
+│   ├── k8s-compliance.yaml                   docs "Kubernetes Compliance" example: Datree + Kubescape gates, then Online Boutique
+│   └── end-all-environments.yaml             space workflow: ends all running environments (needs torque_token param)
 ├── policies/
 │   ├── max_duration.rego                     Torque environment policy: cap environment lifetime
 │   ├── max_duration_test.rego                OPA unit tests (opa test policies/ -v)

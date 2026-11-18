@@ -1,0 +1,60 @@
+spec_version: 2
+
+# ---------------------------------------------------------------------------
+# End all running environments in the space
+#
+# Space-scoped workflow: run it from the space's Workflows page and it ends
+# every Active (or Active With Error) environment in that space through the
+# Torque API (scripts/end-all-environments.sh). Workflow runs, including this
+# one, and environments with termination protection are skipped. Torque
+# tears each environment down as usual, destroying its resources.
+#
+# Prerequisite: a sensitive Parameter Store entry named torque_token holding
+# a Torque API token that may end environments in the space. The workflow
+# acts as that token's user, not as the person who runs it.
+#
+# The workflow only asks Torque to end the environments; it finishes before
+# their teardown does. Follow progress on the Environments page.
+# ---------------------------------------------------------------------------
+
+description: |
+  Ends every running environment in this space. Workflow runs and
+  environments with termination protection are skipped.
+
+metadata:
+  display-name: End All Environments
+
+workflow:
+  scope: space
+  timeout: 15
+
+inputs:
+
+  agent:
+    type: agent
+    default: gke-demo-prod
+    description: Torque Kubernetes agent that runs the shell grain.
+
+  torque_host:
+    type: string
+    default: portal.qtorque.io
+    description: Hostname of the Torque account the API calls go to.
+
+grains:
+
+  end-environments:
+    kind: shell
+    spec:
+      agent:
+        name: '{{ .inputs.agent }}'
+      env-vars:
+        - TORQUE_TOKEN: '{{ .params.torque_token }}'
+        - SPACE: '{{ spaceName }}'
+        - TORQUE_HOST: '{{ .inputs.torque_host }}'
+      files:
+        - source: torque-takehome-justo
+          path: scripts/end-all-environments.sh
+      activities:
+        deploy:
+          commands:
+            - bash end-all-environments.sh "$SPACE" "$TORQUE_HOST"
