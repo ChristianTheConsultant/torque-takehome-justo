@@ -35,7 +35,8 @@ This repository contains a complete Torque blueprint that provisions a Google Cl
 │   ├── aws-chessu.yaml                       chessu multiplayer chess on the same EC2 + RDS module
 │   ├── multi-grain-chain.yaml                3 shell grains, each one's output feeds the next (no cloud resources)
 │   ├── k8s-as-a-service.yaml                 docs "Kubernetes as a Service" example: GKE cluster + Online Boutique
-│   └── k8s-compliance.yaml                   docs "Kubernetes Compliance" example: Datree + Kubescape gates, then Online Boutique
+│   ├── k8s-compliance.yaml                   docs "Kubernetes Compliance" example: Datree + Kubescape gates, then Online Boutique
+│   └── fail-to-terminate.yaml                test blueprint: deploys nothing, ending it fails (leaves it Terminate Failed)
 ├── workflows/                                Torque workflows, kept apart from environment blueprints
 │   └── .workflows                            marker file that tells Torque to read workflows from this folder
 ├── policies/
